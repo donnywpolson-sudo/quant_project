@@ -21,6 +21,7 @@ def add_labels(df: pl.DataFrame, *, horizon: int = 15, entry_lag_bars: int = 1, 
         ((pl.col(price_col).shift(-exit_lag) / pl.col(price_col).shift(-entry)).log() * float(target_scale_factor)).alias(target_col),
         pl.lit(entry_lag_bars).alias("label_entry_lag_bars"),
         pl.lit(horizon).alias("label_horizon_bars"),
+        pl.lit(float(target_scale_factor)).alias("label_target_scale_factor"),
     )
 
 

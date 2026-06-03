@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import polars as pl
 
@@ -26,10 +29,22 @@ def validate_raw_to_validated(raw_root: str | Path = "data/raw", validated_root:
             if missing:
                 status = "FAIL"
                 note = f"missing columns: {missing}"
+            elif df["ts_event"].n_unique() != df.height:
+                status = "FAIL"
+                note = "duplicate ts_event"
+            elif {"open", "high", "low", "close"}.issubset(df.columns) and df.filter(
+                (pl.col("high") < pl.col("low"))
+                | (pl.col("open") > pl.col("high"))
+                | (pl.col("open") < pl.col("low"))
+                | (pl.col("close") > pl.col("high"))
+                | (pl.col("close") < pl.col("low"))
+            ).height:
+                status = "FAIL"
+                note = "invalid OHLC ordering"
             elif write_validated:
                 out = validated_root / p.parent.name / p.name
                 out.parent.mkdir(parents=True, exist_ok=True)
-                clean = df.drop_nulls(["ts_event"]) if clean_policy == "drop-invalid" else df
+                clean = df.drop_nulls(["ts_event"]).sort("ts_event") if clean_policy == "drop-invalid" else df
                 clean.write_parquet(out)
         except Exception as exc:
             status = "FAIL"
@@ -61,4 +76,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

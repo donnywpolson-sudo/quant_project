@@ -8,6 +8,7 @@ import polars as pl
 from pipeline.features.discovery import select_features_train_only
 from pipeline.features.engine import load_or_build_feature_target_matrix
 from pipeline.features.preprocessing import fit_apply_train_scaler
+from pipeline.execution.cost_model import attach_execution_cost_model
 from pipeline.walkforward.walkforward import apply_walkforward_contract
 
 
@@ -55,7 +56,7 @@ def run_full_research_modeling(
     )
     beta, intercept = _fit_ridge(train_s, selected, target_col, float(cfg.walkforward.ridge_params.get("alpha", 1.0)))
     pred = _predict(test_s, selected, beta, intercept)
-    result = _attach_execution(test_s, pred, target_col, cfg, feature_set_id=_feature_set_id(selected))
+    result = _attach_execution(test_s, pred, target_col, cfg, feature_set_id=_feature_set_id(selected), symbol=context.get("symbol"))
     artifacts = {
         "feature_registry": registry,
         "selector_path": selector_artifact["path"],
@@ -86,45 +87,16 @@ def _predict(test: pl.DataFrame, features: list[str], beta: np.ndarray, intercep
     return x @ beta + intercept
 
 
-def _attach_execution(df: pl.DataFrame, pred: np.ndarray, target_col: str, cfg: Any, feature_set_id: str) -> pl.DataFrame:
+def _attach_execution(df: pl.DataFrame, pred: np.ndarray, target_col: str, cfg: Any, feature_set_id: str, symbol: str | None = None) -> pl.DataFrame:
     out = df.with_columns(pl.Series("prediction", pred))
     out = out.with_columns(
         (1.0 / (1.0 + (-pl.col("prediction")).exp())).alias("prediction_prob"),
-        pl.when(pl.col("prediction") > 0).then(1).when(pl.col("prediction") < 0).then(-1).otherwise(0).alias("raw_signal"),
+        pl.when(pl.col("prediction") > float(cfg.execution.prediction_entry_threshold)).then(1)
+        .when(pl.col("prediction") < -float(cfg.execution.prediction_entry_threshold)).then(-1)
+        .otherwise(0).alias("raw_signal"),
+        pl.lit(float(cfg.execution.prediction_entry_threshold)).alias("signal_entry_threshold"),
     )
-    if out["ts_event"].dtype in (pl.Int64, pl.Int32, pl.UInt64, pl.UInt32):
-        exec_time = pl.col("ts_event") + int(cfg.execution.entry_lag_bars)
-    else:
-        exec_time = pl.col("ts_event") + pl.duration(minutes=int(cfg.execution.entry_lag_bars))
-    fill = "open" if "open" in out.columns else "close"
-    out = out.with_columns(
-        pl.col("ts_event").alias("prediction_time"),
-        exec_time.alias("execution_time"),
-        pl.col("raw_signal").clip(-cfg.execution.max_contracts, cfg.execution.max_contracts).alias("position"),
-        pl.col(fill).alias("assumed_fill_price"),
-    )
-    out = out.with_columns(
-        pl.col("position").shift(1).fill_null(0).alias("position_before"),
-        pl.col("position").alias("position_after"),
-    )
-    out = out.with_columns((pl.col("position_after") - pl.col("position_before")).alias("position_delta"))
-    per_contract_cost = (
-        float(cfg.execution.commission_per_contract)
-        + float(cfg.execution.exchange_fees_per_contract)
-        + float(cfg.execution.spread_ticks) * 0.5
-    )
-    out = out.with_columns(
-        pl.col(target_col).cast(pl.Float64).alias("ret_exec"),
-        pl.col(target_col).cast(pl.Float64).alias("target_exec"),
-        (pl.col("position_after") * pl.col(target_col).cast(pl.Float64)).alias("gross_pnl"),
-        (pl.col("position_delta").abs() * per_contract_cost).alias("fees"),
-        (pl.col("position_delta").abs() * float(cfg.execution.slippage_ticks)).alias("slippage"),
-        pl.lit(feature_set_id).alias("feature_set_id"),
-    )
-    out = out.with_columns((pl.col("fees") + pl.col("slippage")).alias("costs"))
-    out = out.with_columns((pl.col("gross_pnl") - pl.col("costs")).alias("pnl"))
-    out = out.with_columns(pl.col("pnl").alias("net_pnl"), pl.col("pnl").cum_sum().alias("equity_curve"))
-    return out.with_columns((pl.col("equity_curve") - pl.col("equity_curve").cum_max()).alias("drawdown_pct"))
+    return attach_execution_cost_model(out, target_col=target_col, config=cfg, symbol=symbol, feature_set_id=feature_set_id)
 
 
 def _feature_set_id(features: list[str]) -> str:

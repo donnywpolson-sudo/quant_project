@@ -143,6 +143,8 @@ base:
     max_leverage: 1.0
     latency_bars: 0
     reject_same_bar_fill: true
+    prediction_entry_threshold: 0.25
+    min_position_hold_bars: 5
     write_execution_trace: true
     execution_trace_rows: 200
     max_pos_change_per_min: 1.0

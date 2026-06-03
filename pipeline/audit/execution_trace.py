@@ -10,6 +10,7 @@ from pipeline.common.io_safe import atomic_write_json
 
 TRACE_COLS = [
     "ts_event", "prediction_time", "execution_time", "prediction_prob", "raw_signal",
+    "signal_entry_threshold", "min_position_hold_bars",
     "position_before", "position_after", "position_delta", "order_side",
     "assumed_fill_price", "slippage", "fees", "gross_pnl", "net_pnl", "pnl",
     "equity_curve", "drawdown_pct", "reason_flat", "reason_trade",

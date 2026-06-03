@@ -26,8 +26,13 @@ def _causal_df(n=200):
         "close": [100.05 + i * 0.1 for i in range(n)],
         "volume": [100 + i for i in range(n)],
         "session_id": ["s"] * n,
+        "session_date": [str(d.date()) for d in ts],
+        "market": ["ES"] * n,
+        "session_timezone": ["America/Chicago"] * n,
+        "session_calendar_accuracy": ["configured"] * n,
         "prediction_time": ts,
         "earliest_execution_time": exec_ts,
+        "non_model_metadata_columns": [""] * n,
         "x": [float(i % 7) for i in range(n)],
     })
 

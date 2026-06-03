@@ -6,7 +6,7 @@ from pipeline.common.config import config
 logger = logging.getLogger(__name__)
 
 def _read_market_config(symbol: str):
-    yaml_path = config.MARKET_CONFIGS.get(symbol) or 'configs/market_specs.yaml'
+    yaml_path = getattr(config, "MARKET_CONFIGS", {}).get(symbol) or 'configs/market_specs.yaml'
     if not yaml_path or not Path(yaml_path).exists():
         return None, yaml_path
 
@@ -20,7 +20,7 @@ def _read_market_config(symbol: str):
 
 
 def _known_symbols() -> set[str]:
-    symbols = set(config.MARKET_CONFIGS.keys())
+    symbols = set(getattr(config, "MARKET_CONFIGS", {}).keys())
     specs_path = Path('configs/market_specs.yaml')
     if specs_path.exists():
         with open(specs_path, 'r') as f:
@@ -101,3 +101,29 @@ def get_contract_multiplier(symbol: str) -> float:
             f'{multiplier}.'
         )
     return multiplier
+
+
+def get_tick_value(symbol: str) -> float:
+    market_cfg, yaml_path = _read_market_config(symbol)
+    if not market_cfg:
+        raise RuntimeError(f'CONTRACT FAIL: no market config found for symbol={symbol}. Cannot resolve tick_value.')
+    specs = market_cfg.get('contract_specs') or {}
+    if 'tick_value' not in specs:
+        raise RuntimeError(f'CONTRACT FAIL: tick_value missing for symbol={symbol} in {yaml_path}.')
+    value = float(specs['tick_value'])
+    if not math.isfinite(value) or value <= 0.0:
+        raise RuntimeError(f'CONTRACT FAIL: invalid tick_value for symbol={symbol}: {value}.')
+    return value
+
+
+def get_tick_size(symbol: str) -> float:
+    market_cfg, yaml_path = _read_market_config(symbol)
+    if not market_cfg:
+        raise RuntimeError(f'CONTRACT FAIL: no market config found for symbol={symbol}. Cannot resolve tick_size.')
+    specs = market_cfg.get('contract_specs') or {}
+    if 'tick_size' not in specs:
+        raise RuntimeError(f'CONTRACT FAIL: tick_size missing for symbol={symbol} in {yaml_path}.')
+    value = float(specs['tick_size'])
+    if not math.isfinite(value) or value <= 0.0:
+        raise RuntimeError(f'CONTRACT FAIL: invalid tick_size for symbol={symbol}: {value}.')
+    return value

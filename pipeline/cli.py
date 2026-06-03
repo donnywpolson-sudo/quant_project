@@ -11,12 +11,14 @@ from typing import Any
 import polars as pl
 
 from pipeline.analytics.aggregate import compute_backtest_metrics, write_metrics_report
+from pipeline.analytics.failure_attribution import write_failure_attribution_report
 from pipeline.audit.execution_trace import build_execution_trace, validate_execution_trace, write_execution_trace_outputs
 from pipeline.audit.leakage import run_leakage_audit
 from pipeline.audit.run_manifest import write_run_manifest
 from pipeline.common.config import RootConfig, config as flat_config, load_config
 from pipeline.common.io_safe import atomic_write_json, write_csv_rows
 from pipeline.common.cache import build_cache_metadata, cache_is_fresh, write_cache_metadata
+from pipeline.execution.cost_model import attach_execution_cost_model
 from pipeline.gates.acceptance import run_acceptance_gate
 from pipeline.gates.deployment import run_deployment_readiness
 from pipeline.stress.stress_tests import run_stress_tests
@@ -25,8 +27,11 @@ from pipeline.orchestration.stage_plan import normalize_start_stage
 
 
 EXCLUDE_COLS = {
-    "ts_event", "date", "session", "session_id", "open", "high", "low", "close", "volume",
-    "prediction_time", "execution_time", "pnl", "gross_pnl", "net_pnl", "fees", "slippage",
+    "ts_event", "date", "session", "session_id", "session_date", "symbol", "market",
+    "session_timezone", "session_calendar_accuracy", "rtype", "publisher_id", "instrument_id",
+    "open", "high", "low", "close", "volume",
+    "prediction_time", "earliest_execution_time", "execution_time", "non_model_metadata_columns",
+    "pnl", "gross_pnl", "net_pnl", "fees", "slippage",
     "position_before", "position_after", "position_delta", "raw_signal", "prediction_prob",
 }
 
@@ -180,7 +185,7 @@ def _load_manifest_payload(path: str | None) -> dict[str, Any]:
         return {}
 
 
-def _run_minimal_compatible_modeling(df: pl.DataFrame, features: list[str], target_col: str, cfg: RootConfig) -> pl.DataFrame:
+def _run_minimal_compatible_modeling(df: pl.DataFrame, features: list[str], target_col: str, cfg: RootConfig, symbol: str | None = None) -> pl.DataFrame:
     if not features:
         raise ValueError("no model features available after safe feature selection")
     score_expr = sum([pl.col(c).fill_null(0).cast(pl.Float64) for c in features]) / float(len(features))
@@ -188,7 +193,10 @@ def _run_minimal_compatible_modeling(df: pl.DataFrame, features: list[str], targ
     df = df.with_columns(
         pl.col("_score").alias("prediction"),
         (0.5 + 0.25 * pl.col("_score")).clip(0.0, 1.0).alias("prediction_prob"),
-        pl.when(pl.col("_score") > 0).then(1).when(pl.col("_score") < 0).then(-1).otherwise(0).alias("raw_signal"),
+        pl.when(pl.col("_score") > float(cfg.execution.prediction_entry_threshold)).then(1)
+        .when(pl.col("_score") < -float(cfg.execution.prediction_entry_threshold)).then(-1)
+        .otherwise(0).alias("raw_signal"),
+        pl.lit(float(cfg.execution.prediction_entry_threshold)).alias("signal_entry_threshold"),
     )
     if "ts_event" in df.columns:
         if df["ts_event"].dtype in (pl.Int64, pl.Int32, pl.UInt64, pl.UInt32):
@@ -196,38 +204,7 @@ def _run_minimal_compatible_modeling(df: pl.DataFrame, features: list[str], targ
         else:
             exec_time = pl.col("ts_event") + pl.duration(minutes=int(cfg.execution.entry_lag_bars))
         df = df.with_columns(pl.col("ts_event").alias("prediction_time"), exec_time.alias("execution_time"))
-    fill = "open" if "open" in df.columns else "close"
-    if fill not in df.columns:
-        raise ValueError("missing fill price column: open/close")
-    df = df.with_columns(
-        pl.col("raw_signal").shift(1).fill_null(0).alias("position_before"),
-        pl.col("raw_signal").clip(-cfg.execution.max_contracts, cfg.execution.max_contracts).alias("position"),
-        pl.col("raw_signal").clip(-cfg.execution.max_contracts, cfg.execution.max_contracts).alias("position_after"),
-        pl.col(fill).alias("assumed_fill_price"),
-    )
-    df = df.with_columns((pl.col("position_after") - pl.col("position_before")).alias("position_delta"))
-    ret = pl.col(target_col).fill_null(0).cast(pl.Float64)
-    costs = pl.col("position_delta").abs() * (
-        float(cfg.execution.commission_per_contract)
-        + float(cfg.execution.exchange_fees_per_contract)
-        + float(cfg.execution.slippage_ticks)
-        + float(cfg.execution.spread_ticks) * 0.5
-    )
-    df = df.with_columns(
-        ret.alias("ret_exec"),
-        ret.alias("target_exec"),
-        (pl.col("position_after") * ret).alias("gross_pnl"),
-        costs.alias("fees"),
-        (pl.col("position_delta").abs() * float(cfg.execution.slippage_ticks)).alias("slippage"),
-    )
-    df = df.with_columns((pl.col("fees") + pl.col("slippage")).alias("costs"))
-    df = df.with_columns((pl.col("gross_pnl") - pl.col("fees") - pl.col("slippage")).alias("pnl"))
-    df = df.with_columns(
-        pl.col("pnl").alias("net_pnl"),
-        pl.col("pnl").cum_sum().alias("equity_curve"),
-        pl.lit("minimal_compatible").alias("feature_set_id"),
-    )
-    df = df.with_columns((pl.col("equity_curve") - pl.col("equity_curve").cum_max()).alias("drawdown_pct"))
+    df = attach_execution_cost_model(df, target_col=target_col, config=cfg, symbol=symbol, feature_set_id="minimal_compatible")
     return df.drop_nulls([target_col, "prediction_prob", "pnl"])
 
 
@@ -278,7 +255,7 @@ def run_modeling_pipeline(
     context.setdefault("test_end", test_end)
     mode = getattr(cfg.pipeline, "modeling_mode", "minimal_compatible")
     if mode == "minimal_compatible":
-        return _run_minimal_compatible_modeling(df, feature_cols, target_col, cfg)
+        return _run_minimal_compatible_modeling(df, feature_cols, target_col, cfg, context.get("symbol"))
     if mode == "full_research":
         return _run_full_research_modeling(df, feature_cols, target_col, cfg, context)
     raise ValueError(f"unsupported pipeline.modeling_mode={mode!r}; expected minimal_compatible or full_research")
@@ -385,7 +362,7 @@ def cmd_run(args: argparse.Namespace, hmm: bool = False) -> None:
         if not train_data:
             raise SystemExit("FULL_RESEARCH MODELING FAIL: missing train data path in discovery manifest")
         train_df = _add_basic_features(_read_data(train_data, args.train_start, args.train_end))
-        modeling_df = pl.concat([train_df, df], how="diagonal")
+        modeling_df = pl.concat([train_df, df], how="diagonal_relaxed")
     result_path = out_dir / ("backtest_results_hmm.parquet" if hmm else "backtest_results.parquet")
     result_meta = build_cache_metadata(
         result_path,
@@ -475,6 +452,14 @@ def cmd_run(args: argparse.Namespace, hmm: bool = False) -> None:
         atomic_write_json(metrics_path, metrics)
         write_csv_rows(metrics_path.with_suffix(".csv"), [metrics])
         write_cache_metadata(metrics_path, metrics_meta)
+    diag_prefix = Path("reports/diagnostics") / f"{profile}_{symbol}_{command}_{window}_failure_attribution"
+    diag_report = write_failure_attribution_report(
+        result,
+        diag_prefix,
+        symbol=symbol,
+        split_id=split_id,
+        modeling_mode=modeling_mode,
+    )
     trace = build_execution_trace(result, max_rows=cfg.execution.execution_trace_rows)
     exec_report = validate_execution_trace(trace, cfg)
     write_execution_trace_outputs(trace, exec_report, out_dir)
@@ -527,6 +512,7 @@ def cmd_run(args: argparse.Namespace, hmm: bool = False) -> None:
             "leakage": str(leakage_path),
             "execution_trace": str(out_dir / "execution_trace_report.json"),
             "metrics": str(metrics_path),
+            "failure_attribution": str(diag_prefix.with_suffix(".json")),
             "stress": str(stress_path) if stress_path else "",
             "acceptance": str(acceptance_path),
             "output": str(result_path),
@@ -553,6 +539,8 @@ def cmd_run(args: argparse.Namespace, hmm: bool = False) -> None:
                 "execution_trace_report": str(out_dir / "execution_trace_report.json"),
                 "execution_trace_status": exec_report.get("status"),
                 "metrics_report": str(metrics_path),
+                "failure_attribution_report": str(diag_prefix.with_suffix(".json")),
+                "dominant_failure": diag_report.get("diagnostic", {}).get("dominant_failure"),
                 "metrics_status": "PASS",
                 "stress_report": str(stress_path) if stress_path else "",
                 "stress_status": stress.get("status") if stress else "MISSING",

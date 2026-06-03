@@ -216,6 +216,8 @@ class ExecutionConfig(BaseModel):
     flat_before_close_minutes: int = 5
     latency_bars: int = 0
     reject_same_bar_fill: bool = True
+    prediction_entry_threshold: float = 0.0
+    min_position_hold_bars: int = 0
     write_execution_trace: bool = True
     execution_trace_rows: int = 200
     htf_trend_alignment: bool = True
@@ -613,6 +615,8 @@ def _populate_simple_namespace(cfg: RootConfig, active_profile: str = "", config
     config.EXECUTION_MAX_CONTRACTS = c.execution.max_contracts
     config.EXECUTION_LATENCY_BARS = c.execution.latency_bars
     config.REJECT_SAME_BAR_FILL = c.execution.reject_same_bar_fill
+    config.PREDICTION_ENTRY_THRESHOLD = c.execution.prediction_entry_threshold
+    config.MIN_POSITION_HOLD_BARS = c.execution.min_position_hold_bars
     config.WRITE_EXECUTION_TRACE = c.execution.write_execution_trace
     config.EXECUTION_TRACE_ROWS = c.execution.execution_trace_rows
     config.TARGET_VOL = c.execution.target_vol

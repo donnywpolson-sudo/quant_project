@@ -8,6 +8,21 @@ import yaml
 
 from pipeline.common.config import config as flat_config, load_config
 from pipeline.common.io_safe import atomic_write_json
+from pipeline.session.normalize import SESSION_KEYS, load_session_config
+
+
+def _session_sections(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    sections: dict[str, dict[str, Any]] = {}
+    for market in sorted((raw.get("markets") or {}).keys()):
+        sections[market] = load_session_config(path, market)
+    for name, section in (raw.get("profiles") or {}).items():
+        sections[f"profile:{name}"] = {k: v for k, v in (section or {}).items() if k in SESSION_KEYS}
+    if not sections and "default" in raw:
+        sections["default"] = load_session_config(path, "")
+    return sections
 
 
 def run_session_roll_audit(config_path: str = "configs/raw_data_validation.yaml", out: str = "reports/session_normalization/session_roll_audit.json") -> dict[str, Any]:
@@ -16,12 +31,10 @@ def run_session_roll_audit(config_path: str = "configs/raw_data_validation.yaml"
     path = Path(config_path)
     if not path.exists():
         failures.append(f"missing validation/session config: {path}")
-        cfg = {}
-    else:
-        cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    markets = cfg.get("markets") or {}
-    profiles = cfg.get("profiles") or {}
-    for name, section in {**profiles, **markets}.items():
+    sections = _session_sections(path)
+    if not sections and path.exists():
+        failures.append(f"no session sections found in {path}")
+    for name, section in sections.items():
         for field in ["timezone", "week_start_day", "week_start_time", "week_end_day", "week_end_time"]:
             if field not in section:
                 failures.append(f"{name}: missing {field}")
@@ -36,7 +49,14 @@ def run_session_roll_audit(config_path: str = "configs/raw_data_validation.yaml"
         failures.append(f"unsupported roll_policy.method={method}")
     if adjustment not in {"back_adjusted", "none", "ratio_adjusted"}:
         failures.append(f"unsupported roll_policy.adjustment={adjustment}")
-    report = {"status": "FAIL" if failures else "PASS", "checks": checks, "failures": failures, "config_path": str(path), "roll_policy": roll_dict}
+    report = {
+        "status": "FAIL" if failures else "PASS",
+        "checks": checks,
+        "failures": failures,
+        "config_path": str(path),
+        "session_sections": sorted(sections.keys()),
+        "roll_policy": roll_dict,
+    }
     atomic_write_json(out, report)
     return report
 

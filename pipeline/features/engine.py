@@ -12,8 +12,18 @@ METADATA_COLS = {
     "date",
     "session",
     "session_id",
+    "session_date",
+    "symbol",
+    "market",
+    "session_timezone",
+    "session_calendar_accuracy",
+    "rtype",
+    "publisher_id",
+    "instrument_id",
     "prediction_time",
+    "earliest_execution_time",
     "execution_time",
+    "non_model_metadata_columns",
     "open",
     "high",
     "low",
@@ -77,4 +87,3 @@ def _safe_numeric_features(df: pl.DataFrame, target_col: str) -> list[str]:
         if dtype.is_numeric():
             out.append(col)
     return out
-

@@ -15,3 +15,30 @@ def test_causal_gating_flags_metadata_and_writes_report(tmp_path, monkeypatch):
     assert "settlement_available_at_is_available" in out.columns
     assert (tmp_path / "reports" / "causal_gating" / "causal_gating_report.json").exists()
 
+
+def test_causal_gating_preserves_raw_ohlcv_and_session_columns():
+    df = pl.DataFrame(
+        {
+            "rtype": [1, 1],
+            "publisher_id": [10, 10],
+            "instrument_id": [100, 100],
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1000, 1100],
+            "symbol": ["ES", "ES"],
+            "ts_event": [1, 2],
+            "session_id": ["s1", "s1"],
+            "session_date": ["2025-01-02", "2025-01-02"],
+            "market": ["ES", "ES"],
+            "session_timezone": ["America/Chicago", "America/Chicago"],
+            "session_calendar_accuracy": ["configured", "configured"],
+        }
+    )
+    out = causal_gate_df(df)
+    for col in df.columns:
+        assert col in out.columns
+    for col in ["open", "high", "low", "close", "volume", "prediction_time", "earliest_execution_time"]:
+        assert col in out.columns
+    assert out["earliest_execution_time"].dtype == out["ts_event"].dtype

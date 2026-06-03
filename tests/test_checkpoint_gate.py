@@ -17,7 +17,9 @@ def _valid():
     return pl.DataFrame({
         "ts_event": [1, 2],
         "open": [1.0, 1.0], "high": [1.0, 1.0], "low": [1.0, 1.0], "close": [1.0, 1.0], "volume": [1, 1],
-        "session_id": ["s", "s"], "prediction_time": [1, 2], "earliest_execution_time": [2, 3],
+        "session_id": ["s", "s"], "session_date": ["2025-01-01", "2025-01-01"], "market": ["ES", "ES"],
+        "session_timezone": ["America/Chicago", "America/Chicago"], "session_calendar_accuracy": ["configured", "configured"],
+        "prediction_time": [1, 2], "earliest_execution_time": [2, 3], "non_model_metadata_columns": ["", ""],
         "foo_available_at": [1, 2],
     })
 

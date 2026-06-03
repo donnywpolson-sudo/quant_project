@@ -24,6 +24,8 @@ python run.py
 # Phase 1 data/report workflow
 # Raw data contract: external ingest writes data/raw/{market}/{year}.parquet
 # with ts_event, open, high, low, close, volume; contract/roll metadata optional.
+# Session normalization now reads the merged per-market session/validation
+# config from configs/raw_data_validation.yaml by default.
 python scripts/validate_databento_continuous.py --audit-only
 python scripts/validate_databento_continuous.py --write-validated --clean-policy drop-invalid
 python scripts/build_data_manifests.py --stages raw validated session_normalized causally_gated_normalized labeled
@@ -110,3 +112,9 @@ python run.py --from-stage causally_gated_normalized --data-root data/causally_g
 data/raw -> data/validated -> data/session_normalized -> data/causally_gated_normalized
 reports/validation -> reports/session_normalization -> reports/causal_gating -> reports/wfa -> reports/metrics
 artifacts/models -> artifacts/scalers -> artifacts/selectors -> artifacts/run_manifests -> artifacts/backtests
+
+# Config ownership
+# configs/raw_data_validation.yaml: merged raw validation + per-market session calendar policy.
+# configs/market_specs.yaml: contract specs, tick value/size, multiplier, risk defaults.
+# configs/alpha_tiered.yaml: active research/profile/runtime config.
+# archive/deprecated_configs/market_sessions.yaml: old simple fallback example, not active.

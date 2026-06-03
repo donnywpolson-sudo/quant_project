@@ -11,7 +11,29 @@ from pipeline.common.cache import build_cache_metadata, cache_is_fresh, write_ca
 
 
 TARGET_PREFIXES = ("target_", "label_")
-METADATA = {"ts_event", "prediction_time", "execution_time", "session_id", "market", "date"}
+METADATA = {
+    "ts_event",
+    "date",
+    "session",
+    "session_id",
+    "session_date",
+    "symbol",
+    "market",
+    "session_timezone",
+    "session_calendar_accuracy",
+    "rtype",
+    "publisher_id",
+    "instrument_id",
+    "prediction_time",
+    "earliest_execution_time",
+    "execution_time",
+    "non_model_metadata_columns",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+}
 FORBIDDEN_PREFIXES = ("future_", "roll_", "continuous_", "front_contract", "back_contract")
 
 

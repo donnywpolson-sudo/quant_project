@@ -50,7 +50,13 @@ def test_run_py_auto_from_ohlcv_continues_from_validated(tmp_path):
 
 def test_run_py_auto_from_session_continues_from_causal_gating(tmp_path):
     root = tmp_path / "session_like"
-    _write(root, _base().with_columns(pl.lit("s").alias("session_id"), pl.lit("2025-01-01").alias("session_date")), "session_normalized")
+    _write(root, _base().with_columns(
+        pl.lit("s").alias("session_id"),
+        pl.lit("2025-01-01").alias("session_date"),
+        pl.lit("ES").alias("market"),
+        pl.lit("America/Chicago").alias("session_timezone"),
+        pl.lit("configured").alias("session_calendar_accuracy"),
+    ), "session_normalized")
     result = _run_auto(tmp_path, root)
     assert result.returncode == 0, result.stderr
     assert "inferred_stage=session_normalized" in result.stdout
@@ -61,12 +67,16 @@ def test_run_py_auto_from_causal_continues_from_labels(tmp_path):
     root = tmp_path / "causal_like"
     df = _base().with_columns(
         pl.lit("s").alias("session_id"),
+        pl.lit("2025-01-01").alias("session_date"),
+        pl.lit("ES").alias("market"),
+        pl.lit("America/Chicago").alias("session_timezone"),
+        pl.lit("configured").alias("session_calendar_accuracy"),
         pl.col("ts_event").alias("prediction_time"),
         (pl.col("ts_event") + pl.duration(minutes=1)).alias("earliest_execution_time"),
+        pl.lit("").alias("non_model_metadata_columns"),
     )
     _write(root, df, "causally_gated_normalized")
     result = _run_auto(tmp_path, root)
     assert result.returncode == 0, result.stderr
     assert "inferred_stage=causally_gated_normalized" in result.stdout
     assert "continuing_from_stage=9 TARGET / LABEL GENERATION" in result.stdout
-

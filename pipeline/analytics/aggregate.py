@@ -26,6 +26,8 @@ def compute_metrics(df: pl.DataFrame) -> dict[str, Any]:
     losses = pnl.filter(pnl < 0)
     gross_win = float(wins.sum() or 0.0)
     gross_loss = abs(float(losses.sum() or 0.0))
+    pos_delta = df["position_delta"].abs() if "position_delta" in df.columns else pl.Series([0.0] * df.height)
+    true_trades = int((pos_delta > 0).sum()) if len(pos_delta) else 0
     return {
         "net_pnl": total,
         "sharpe": sharpe,
@@ -34,8 +36,9 @@ def compute_metrics(df: pl.DataFrame) -> dict[str, Any]:
         "calmar": 0.0 if max_dd == 0 else total / abs(max_dd),
         "max_drawdown": max_dd,
         "max_drawdown_pct": max_dd / max(abs(float(peak.max() or 0.0)), 1.0),
-        "trades": int(df.height),
-        "trade_count": int(df.height),
+        "bars": int(df.height),
+        "trades": true_trades,
+        "trade_count": true_trades,
         "hit_rate": float((pnl > 0).mean() or 0.0),
         "active_bar_hit_rate": float((pnl.filter(pnl != 0) > 0).mean() or 0.0) if pnl.filter(pnl != 0).len() else 0.0,
         "trade_hit_rate": float((pnl > 0).mean() or 0.0),
@@ -43,8 +46,8 @@ def compute_metrics(df: pl.DataFrame) -> dict[str, Any]:
         "average_loss": float(losses.mean() or 0.0),
         "average_win_loss_ratio": 0.0 if float(losses.mean() or 0.0) == 0 else abs(float(wins.mean() or 0.0) / float(losses.mean())),
         "profit_factor": float("inf") if gross_loss == 0 and gross_win > 0 else (gross_win / gross_loss if gross_loss else 0.0),
-        "turnover": float(df["position_delta"].abs().sum() if "position_delta" in df.columns else 0.0),
-        "turnover_per_bar": float(df["position_delta"].abs().mean() if "position_delta" in df.columns else 0.0),
+        "turnover": float(pos_delta.sum() or 0.0) if len(pos_delta) else 0.0,
+        "turnover_per_bar": float(pos_delta.mean() or 0.0) if len(pos_delta) else 0.0,
         "tail_loss_5pct": float(pnl.quantile(0.05) or 0.0),
         "skew": float(pnl.skew() or 0.0),
         "kurtosis": float(pnl.kurtosis() or 0.0),
@@ -107,6 +110,9 @@ def compute_backtest_metrics(df: pl.DataFrame) -> dict[str, Any]:
             "trade_hit_rate_n": trade_pnl.len(),
             "position_change_events": int((pos_delta > 0).sum()) if len(pos_delta) else 0,
             "position_turnover": float(pos_delta.sum() or 0.0) if len(pos_delta) else 0.0,
+            "bars": df.height,
+            "trades": int((pos_delta > 0).sum()) if len(pos_delta) else 0,
+            "trade_count": int((pos_delta > 0).sum()) if len(pos_delta) else 0,
         }
     )
     return metrics

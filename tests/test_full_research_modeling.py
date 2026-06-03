@@ -1,8 +1,10 @@
 import importlib.util
+import argparse
+import json
 
 import polars as pl
 
-from pipeline.cli import run_modeling_pipeline
+from pipeline.cli import cmd_run, run_modeling_pipeline
 from pipeline.common.config import PipelineConfig, RootConfig, TargetConfig
 
 
@@ -55,3 +57,40 @@ def test_full_research_mode_runs_train_to_test_only(tmp_path, monkeypatch):
     assert out["ts_event"].min() >= 15
     assert ctx["modeling_artifacts"]["selector_path"]
     assert ctx["modeling_artifacts"]["scaler_path"]
+
+
+def test_full_research_cli_relaxes_train_test_schema_mismatch(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cfg = RootConfig(pipeline=PipelineConfig(modeling_mode="full_research"), target=TargetConfig(target_15m_horizon=1))
+    monkeypatch.setattr("pipeline.cli._load_cfg", lambda: cfg)
+    train = tmp_path / "train" / "ES" / "2025.parquet"
+    test = tmp_path / "test" / "ES" / "2025.parquet"
+    train.parent.mkdir(parents=True)
+    test.parent.mkdir(parents=True)
+    base = _df(120).with_columns(
+        pl.col("ts_event").cast(pl.Int64),
+        (pl.col("open") + 1.0).alias("high"),
+        (pl.col("open") - 1.0).alias("low"),
+    )
+    train_df = base.filter(pl.col("ts_event") < 60).with_columns(pl.col("volume").cast(pl.Int64))
+    test_df = base.filter(pl.col("ts_event") >= 60).with_columns(pl.col("volume").cast(pl.Float64))
+    train_df.write_parquet(train)
+    test_df.write_parquet(test)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"data": str(train), "selected_features": ["x"], "target_col": "target_15m_ret"}), encoding="utf-8")
+
+    cmd_run(
+        argparse.Namespace(
+            data=str(test),
+            manifest=str(manifest),
+            out=str(tmp_path / "out"),
+            train_start="0",
+            train_end="60",
+            start="60",
+            end="120",
+            from_stage=None,
+            data_root=None,
+        )
+    )
+
+    assert (tmp_path / "out" / "backtest_results.parquet").exists()

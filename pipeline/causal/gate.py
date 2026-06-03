@@ -14,11 +14,12 @@ METADATA_PREFIXES = ("roll_", "continuous_", "front_contract", "back_contract")
 def causal_gate_df(df: pl.DataFrame) -> pl.DataFrame:
     exprs = []
     if "ts_event" in df.columns:
+        ts_dtype = df["ts_event"].dtype
         exprs.append(pl.col("ts_event").alias("prediction_time"))
         if df["ts_event"].dtype in (pl.Int64, pl.Int32, pl.UInt64, pl.UInt32):
-            exprs.append((pl.col("ts_event") + 1).alias("earliest_execution_time"))
+            exprs.append((pl.col("ts_event") + 1).cast(ts_dtype).alias("earliest_execution_time"))
         else:
-            exprs.append((pl.col("ts_event") + pl.duration(minutes=1)).alias("earliest_execution_time"))
+            exprs.append((pl.col("ts_event") + pl.duration(minutes=1)).cast(ts_dtype).alias("earliest_execution_time"))
     for c in df.columns:
         if c.endswith("_available_at"):
             exprs.append((pl.col(c) <= pl.col("ts_event")).fill_null(False).alias(f"{c}_is_available"))

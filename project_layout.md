@@ -75,9 +75,25 @@ artifacts/
 
 configs/
   alpha_tiered.yaml
-  raw_data_validation.yaml
+  raw_data_validation.yaml   # merged raw validation + per-market session calendar config
   market_specs.yaml
 ```
 
 `data/validated/` currently has manifests only unless raw validation is run with
 `--write-validated --clean-policy drop-invalid`.
+
+## Config ownership
+
+- `configs/raw_data_validation.yaml`
+  - raw data validation policy
+  - per-market session calendar/session-break settings
+  - consumed by raw/session audits and session normalization
+- `configs/market_specs.yaml`
+  - contract multiplier
+  - tick size/value
+  - market risk defaults
+- `configs/alpha_tiered.yaml`
+  - active profile/runtime/modeling config
+- `archive/deprecated_configs/market_sessions.yaml`
+  - old simple fallback example
+  - not active; retained only for reference

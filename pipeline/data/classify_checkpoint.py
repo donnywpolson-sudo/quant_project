@@ -21,6 +21,8 @@ ORDER = {
     "baseline_feature_matrix": 6,
 }
 OHLCV = {"ts_event", "open", "high", "low", "close", "volume"}
+SESSION = {"session_id", "session_date", "market", "session_timezone", "session_calendar_accuracy"}
+CAUSAL = {"prediction_time", "earliest_execution_time", "non_model_metadata_columns"}
 FORBIDDEN = ("future_",)
 
 
@@ -70,14 +72,14 @@ def classify_frame(df: pl.DataFrame, root: Path | None = None, target_col: str =
         return "unknown", "required OHLCV columns missing"
     if "session_id" not in cols:
         return "validated_candidate", "OHLCV found, but session_id/prediction_time missing. Start from validated or run session normalization."
-    if "session_date" not in cols and not any(c in cols for c in ["session", "date", "market"]):
-        # session_id alone is enough for the current normalizer output, but note weaker evidence.
-        session_note = "session_id found without session_date; treating session_id as equivalent session column."
-    else:
-        session_note = "session columns found."
+    missing_session = sorted(SESSION - cols)
+    if missing_session:
+        return "validated_candidate", f"session_id found, but required session-normalized columns missing: {missing_session}. Rerun session normalization."
+    session_note = "session columns found."
     exec_col = "earliest_execution_time" if "earliest_execution_time" in cols else ("execution_time" if "execution_time" in cols else None)
-    if "prediction_time" not in cols or exec_col is None:
-        return "session_normalized_candidate", f"{session_note} Session columns found, but causal timing columns missing. Start from session_normalized or run causal gating."
+    missing_causal = sorted(CAUSAL - cols)
+    if missing_causal:
+        return "session_normalized_candidate", f"{session_note} Session columns found, but causal columns missing: {missing_causal}. Start from session_normalized or run causal gating."
     if df.filter(pl.col("prediction_time") > pl.col(exec_col)).height:
         return "session_normalized_candidate", "prediction_time exceeds earliest execution time; rerun causal gating."
     forbidden = [c for c in df.columns if c.startswith(FORBIDDEN)]

@@ -15,6 +15,8 @@ SUPPORTED_START_STAGES = {
     "labeled", "baseline_feature_matrix", "expanded_feature_matrix",
 }
 REQUIRED_OHLCV = {"ts_event", "open", "high", "low", "close", "volume"}
+REQUIRED_SESSION = {"session_id", "session_date", "market", "session_timezone", "session_calendar_accuracy"}
+REQUIRED_CAUSAL = {"prediction_time", "earliest_execution_time", "non_model_metadata_columns"}
 
 
 class CheckpointGateError(RuntimeError):
@@ -59,11 +61,17 @@ def _check_common(df: pl.DataFrame, stage: str) -> list[str]:
         if bad:
             failures.append(f"invalid OHLC rows={bad}")
     if stage in {"session_normalized", "causally_gated_normalized", "labeled"}:
+        missing_session = sorted(REQUIRED_SESSION - set(df.columns))
+        if missing_session:
+            failures.append(f"missing required session columns: {missing_session}")
         if "session_id" not in df.columns:
             failures.append("missing session_id; start from validated or run session normalization")
         elif df.filter(pl.col("session_id").is_null()).height:
             failures.append("null session_id")
     if stage in {"causally_gated_normalized", "labeled"}:
+        missing_causal = sorted(REQUIRED_CAUSAL - set(df.columns))
+        if missing_causal:
+            failures.append(f"missing required causal columns: {missing_causal}")
         if "prediction_time" not in df.columns:
             failures.append("missing prediction_time; if this is session_normalized, start from session_normalized and run causal gating")
         exec_col = "earliest_execution_time" if "earliest_execution_time" in df.columns else ("execution_time" if "execution_time" in df.columns else None)
