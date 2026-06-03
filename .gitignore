@@ -1,0 +1,107 @@
+# ============================================================
+# Environment / secrets
+# ============================================================
+
+.venv/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ============================================================
+# Python/runtime caches
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.nbc
+*.nbi
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# ============================================================
+# Generated model/research outputs
+# ============================================================
+
+output/
+outputs/
+reports/
+logs/
+*.log
+full_code.txt
+
+# ============================================================
+# Generated / derived data
+# ============================================================
+
+data/raw/
+data/session_normalized/
+data/labeled/
+data/causally_gated_normalized/
+data/feature_matrices/
+data/features_baseline/
+
+data/validated/
+data/processed/
+data/cache/
+data/features/
+data/model_inputs/
+data/backups/
+data/validation_reports/
+
+# Keep intentionally committed sample data
+!data/samples/
+!data/samples/**
+
+data/frozen_features/
+
+# ============================================================
+# Large market/data artifact formats
+# ============================================================
+
+*.parquet
+*.pq
+*.csv.gz
+*.feather
+*.arrow
+*.h5
+*.hdf5
+*.dbn
+*.dbn.zst
+*.zst
+
+# ============================================================
+# Model artifacts
+# ============================================================
+
+models/
+artifacts/
+model_artifacts/
+checkpoints/
+
+*.pkl
+*.pickle
+*.joblib
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.model
+
+# ============================================================
+# Temporary files
+# ============================================================
+
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+~$*
+.DS_Store
+Thumbs.db

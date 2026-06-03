@@ -1,0 +1,369 @@
+# alpha_tiered.yaml - simplified tiered research profiles for 1-minute futures OHLCV
+# Data layout expected by these profiles:
+#   data/raw/{market}/{year}.parquet
+# Example:
+#   data/raw/ES/2025.parquet
+#   data/raw/6E/2024.parquet
+#
+# Recommended progression:
+#   tier_0_smoke_pipeline              -> proves the code/data path works
+#   tier_1_bare_minimum_alpha          -> minimum evidence that alpha may exist
+#   tier_2_cross_asset_validation      -> basic cross-asset validation
+#   tier_3_rigorous_research           -> diversified research universe
+#   tier_4_professional_full_grade     -> full all-market professional-grade test
+#   tier_5_full_history_stress_no_sr3  -> optional long-history stress test excluding SR3
+
+active_profile: tier_0_smoke_pipeline
+
+base:
+  time_zone: "America/New_York"
+  log_level: "INFO"
+
+  data:
+    # Must match your Databento downloader output folder.
+    root: "data/raw"
+
+  session:
+    timezone: "America/New_York"
+    session_start_local: "18:00"
+    session_end_local: "16:00"
+    session_break_start_local: "17:00"
+    session_break_end_local: "18:00"
+
+  features:
+    # Keep the base simple. Later profiles may add 5m/1h derived features.
+    resample_frequencies: ["1m"]
+    drop_incomplete_rows: true
+    roll_windows: [5, 10, 20]
+    roll_window_min_rows: 20
+    feature_transforms: ["lags", "ratios", "z_scores"]
+    max_pairwise_interactions: 0
+    max_cross_timeframe_interactions: 0
+    htf_alignment_filter: false
+    vol_median_window: 20
+    vol_smooth_window: 5
+    regime_high_thresh: 0.6
+    regime_low_thresh: 0.4
+    regime_missing_default: 0.0
+
+  target:
+    target_15m_horizon: 15
+    target_scale_factor: 100.0
+
+  discovery:
+    discovery_window_days: 30
+    bootstrap_folds: 5
+    extra_trees_params:
+      random_state: 42
+      n_jobs: 1
+      n_estimators: 100
+      max_depth: 4
+      max_features: 0.3
+      bootstrap: false
+    selection_freq_threshold: 0.55
+    sign_consistency_threshold: 0.55
+    cumulative_importance_threshold: 0.95
+    min_selected_features: 5
+    max_selected_features: 30
+
+  walkforward:
+    # Default walk-forward: 6 months train, 1 month test, monthly step.
+    wf_train_days: 180
+    wf_test_days: 30
+    wf_step_days: 30
+    mode: outer_split
+    model_type: "Ridge"
+    ridge_params:
+      alpha: 1.0
+      solver: "cholesky"
+      fit_intercept: true
+      random_state: 42
+    probability_smoothing_alpha: 0.0
+    corr_threshold: 0.99
+    wf_parallel_folds: 1
+    enable_meta_labeling: false
+    meta_threshold: 0.5
+    discovery_target: "target_15m_ret"
+    walkforward_target: "target_15m_ret"
+
+  execution:
+    execute_at: "open[t+1]"
+    # Keep tier_0/tier_1 mostly clean. Higher tiers add conservative costs.
+    slippage_k: 0.0
+    vol_penalty: 0.0
+    commission_per_trade: 0.0
+    tx_cost_per_roundturn: 0.0
+    commission_per_contract: 0.0
+    target_vol: 0.01
+    max_leverage: 1.0
+    max_pos_change_per_min: 1.0
+    flat_before_close_minutes: 5
+    htf_trend_alignment: false
+    htf_vol_scaling: false
+    htf_vol_window: 10
+    z_score_entry_threshold: 1.5
+    target_risk_per_trade: 0.01
+    stop_loss_pct: 0.0
+    take_profit_pct: 0.0
+    gap_slippage_pct: 0.0
+
+  preprocessing:
+    clip_min: -10.0
+    clip_max: 10.0
+    eps: 1.0e-09
+    replace_inf_nan_with: 0.0
+    remove_prediction_bias: true
+    seed: 42
+
+  io:
+    row_group_size: 65536
+    # Your old config used 20, which can silently cap a multi-market, multi-year run.
+    max_files: 100000
+    skip_completed: true
+
+  pipeline:
+    enable_discovery: true
+    enable_expansion: false
+
+  hmm:
+    # Keep disabled until the simple model is clearly positive out-of-sample.
+    enabled: false
+    n_iter: 30
+    tol: 0.001
+
+profiles:
+  # --------------------------------------------------------------------------
+  # TIER 0: Smoke test / pipeline check
+  # Purpose: prove the loader, features, target, and walk-forward run correctly.
+  # This does not prove alpha.
+  # --------------------------------------------------------------------------
+  tier_0_smoke_pipeline:
+    symbols: ["ES"]
+    data_years: 1
+    folds: 1
+    start_year: 2025
+    end_year: 2025
+    walkforward:
+      wf_train_days: 120
+      wf_test_days: 20
+      wf_step_days: 20
+      model_type: "Ridge"
+    discovery:
+      discovery_window_days: 20
+      bootstrap_folds: 3
+      min_selected_features: 5
+      max_selected_features: 20
+
+  # --------------------------------------------------------------------------
+  # TIER 1: Bare minimum to show alpha may exist
+  # Markets: equity index, energy, rates.
+  # Years: 3 full years.
+  # Walk-forward: 6 months train, 1 month test, monthly step.
+  # --------------------------------------------------------------------------
+  tier_1_bare_minimum_alpha:
+    symbols: ["ES", "CL", "ZN"]
+    data_years: 3
+    folds: 3
+    start_year: 2023
+    end_year: 2025
+    walkforward:
+      wf_train_days: 180
+      wf_test_days: 30
+      wf_step_days: 30
+      model_type: "Ridge"
+    discovery:
+      discovery_window_days: 30
+      bootstrap_folds: 5
+      selection_freq_threshold: 0.55
+      sign_consistency_threshold: 0.55
+      min_selected_features: 5
+      max_selected_features: 30
+
+  # --------------------------------------------------------------------------
+  # TIER 2: Basic cross-asset validation
+  # Markets: equities, rates, FX, energy, metals, grains.
+  # Years: 5 full years.
+  # Walk-forward: 1 year train, 1 month test, monthly step.
+  # Costs: light conservative placeholder costs turned on.
+  # --------------------------------------------------------------------------
+  tier_2_cross_asset_validation:
+    symbols: ["ES", "NQ", "ZN", "ZB", "6E", "CL", "GC", "ZC"]
+    data_years: 5
+    folds: 5
+    start_year: 2021
+    end_year: 2025
+    features:
+      resample_frequencies: ["1m"]
+      roll_windows: [5, 10, 20, 50]
+      feature_transforms: ["lags", "ratios", "z_scores"]
+      max_pairwise_interactions: 0
+      max_cross_timeframe_interactions: 0
+    discovery:
+      discovery_window_days: 60
+      bootstrap_folds: 10
+      extra_trees_params:
+        random_state: 42
+        n_jobs: 1
+        n_estimators: 150
+        max_depth: 5
+        max_features: 0.3
+        bootstrap: false
+      selection_freq_threshold: 0.60
+      sign_consistency_threshold: 0.60
+      min_selected_features: 8
+      max_selected_features: 40
+    walkforward:
+      wf_train_days: 252
+      wf_test_days: 30
+      wf_step_days: 30
+      model_type: "Ridge"
+    execution:
+      slippage_k: 0.00010
+      vol_penalty: 0.0010
+      tx_cost_per_roundturn: 0.00005
+      commission_per_contract: 1.50
+
+  # --------------------------------------------------------------------------
+  # TIER 3: Rigorous diversified research
+  # Markets: 16-market research core.
+  # Years: 7 full years.
+  # Walk-forward: 2 years train, 3 months test, monthly step.
+  # Adds 5m features but keeps HMM/meta-labeling disabled.
+  # --------------------------------------------------------------------------
+  tier_3_rigorous_research:
+    symbols: ["ES", "NQ", "RTY", "SR3", "ZN", "ZB", "6E", "6J", "6B", "CL", "NG", "GC", "HG", "ZC", "ZS", "ZW"]
+    data_years: 7
+    folds: 7
+    start_year: 2019
+    end_year: 2025
+    features:
+      resample_frequencies: ["1m", "5m"]
+      roll_windows: [5, 10, 20, 50]
+      feature_transforms: ["lags", "ratios", "z_scores", "pairwise_products_limited"]
+      max_pairwise_interactions: 50
+      max_cross_timeframe_interactions: 0
+      htf_alignment_filter: false
+    discovery:
+      discovery_window_days: 90
+      bootstrap_folds: 15
+      extra_trees_params:
+        random_state: 42
+        n_jobs: 1
+        n_estimators: 200
+        max_depth: 6
+        max_features: 0.3
+        bootstrap: false
+      selection_freq_threshold: 0.65
+      sign_consistency_threshold: 0.65
+      min_selected_features: 10
+      max_selected_features: 60
+    walkforward:
+      wf_train_days: 504
+      wf_test_days: 63
+      wf_step_days: 30
+      model_type: "Ridge"
+      enable_meta_labeling: false
+    execution:
+      slippage_k: 0.00015
+      vol_penalty: 0.0020
+      tx_cost_per_roundturn: 0.00010
+      commission_per_contract: 1.50
+    pipeline:
+      enable_expansion: true
+    hmm:
+      enabled: false
+
+  # --------------------------------------------------------------------------
+  # TIER 4: Professional quant research full grade
+  # Markets: all 20 markets mentioned in the prompt.
+  # Years: 8 full years, starting after CME MDP 3.0 was introduced.
+  # Walk-forward: 3 years train, 3 months test, monthly step.
+  # Use this for the main professional-grade acceptance test.
+  # --------------------------------------------------------------------------
+  tier_4_professional_full_grade:
+    symbols: ["ES", "NQ", "RTY", "YM", "SR3", "ZN", "ZB", "6E", "6J", "6B", "CL", "NG", "GC", "SI", "HG", "ZC", "ZS", "ZW", "LE", "HE"]
+    data_years: 8
+    folds: 8
+    start_year: 2018
+    end_year: 2025
+    features:
+      resample_frequencies: ["1m", "5m", "1h"]
+      roll_windows: [5, 10, 20, 50]
+      roll_windows_1h: [2, 4, 6, 12]
+      feature_transforms: ["lags", "ratios", "z_scores", "pairwise_products_limited", "cross_timeframe_ratios"]
+      max_pairwise_interactions: 75
+      max_cross_timeframe_interactions: 50
+      htf_alignment_filter: true
+      htf_trend_threshold: 0.1
+    discovery:
+      discovery_window_days: 120
+      bootstrap_folds: 20
+      extra_trees_params:
+        random_state: 42
+        n_jobs: 1
+        n_estimators: 250
+        max_depth: 6
+        max_features: 0.3
+        bootstrap: false
+      selection_freq_threshold: 0.70
+      sign_consistency_threshold: 0.70
+      min_selected_features: 10
+      max_selected_features: 75
+    walkforward:
+      wf_train_days: 756
+      wf_test_days: 63
+      wf_step_days: 30
+      model_type: "Ridge"
+      enable_meta_labeling: false
+    execution:
+      slippage_k: 0.00020
+      vol_penalty: 0.0030
+      tx_cost_per_roundturn: 0.00015
+      commission_per_contract: 1.50
+      htf_trend_alignment: true
+      htf_vol_scaling: true
+    pipeline:
+      enable_expansion: true
+    hmm:
+      enabled: false
+
+  # --------------------------------------------------------------------------
+  # TIER 5: Optional long-history stress test
+  # Excludes SR3 because SOFR has a shorter clean history than the older markets.
+  # Purpose: regime stress, not the primary acceptance test.
+  # --------------------------------------------------------------------------
+  tier_5_full_history_stress_no_sr3:
+    symbols: ["ES", "NQ", "RTY", "YM", "ZN", "ZB", "6E", "6J", "6B", "CL", "NG", "GC", "SI", "HG", "ZC", "ZS", "ZW", "LE", "HE"]
+    data_years: 15
+    folds: 15
+    start_year: 2011
+    end_year: 2025
+    features:
+      resample_frequencies: ["1m", "5m"]
+      roll_windows: [5, 10, 20, 50]
+      feature_transforms: ["lags", "ratios", "z_scores", "pairwise_products_limited"]
+      max_pairwise_interactions: 50
+      max_cross_timeframe_interactions: 0
+      htf_alignment_filter: false
+    discovery:
+      discovery_window_days: 120
+      bootstrap_folds: 20
+      selection_freq_threshold: 0.70
+      sign_consistency_threshold: 0.70
+      min_selected_features: 10
+      max_selected_features: 75
+    walkforward:
+      wf_train_days: 756
+      wf_test_days: 63
+      wf_step_days: 63
+      model_type: "Ridge"
+      enable_meta_labeling: false
+    execution:
+      slippage_k: 0.00020
+      vol_penalty: 0.0030
+      tx_cost_per_roundturn: 0.00015
+      commission_per_contract: 1.50
+    pipeline:
+      enable_expansion: true
+    hmm:
+      enabled: false

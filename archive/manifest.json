@@ -1,0 +1,10 @@
+﻿{
+    "original_path":  "pipeline/target/triple_barrier.py",
+    "archived_path":  "archive/deprecated_code/pipeline/target/triple_barrier.py",
+    "reason":  "Archived because no active inbound references were found and current pipeline uses 15m return target path.",
+    "evidence":  [
+                     "Preflight rg \"triple_barrier|add_triple_barrier_target\" run.py pipeline scripts tests README.md project_layout.md configs returned only self-definition.",
+                     "pipeline\\target\\triple_barrier.py:5:def add_triple_barrier_target(df: pl.DataFrame) -\u003e pl.DataFrame:"
+                 ],
+    "archived_at":  "2026-06-02T07:03:00.6184275Z"
+}

@@ -1,0 +1,12 @@
+# Inherits defaults from market_defaults.yaml  --  override-only fields listed.
+metadata:
+  ticker: ZB
+  contract_multiplier: 1000
+contract_specs:
+  tick_size: 0.03125
+  tick_value: 31.25
+risk:
+  slippage_k: 0.0002
+  vol_penalty: 0.001
+  max_leverage: 2.5
+  max_position_size: 20
