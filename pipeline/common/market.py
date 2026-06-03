@@ -5,35 +5,58 @@ from pathlib import Path
 from pipeline.common.config import config
 logger = logging.getLogger(__name__)
 
+def _read_market_config(symbol: str):
+    yaml_path = config.MARKET_CONFIGS.get(symbol) or 'configs/market_specs.yaml'
+    if not yaml_path or not Path(yaml_path).exists():
+        return None, yaml_path
+
+    with open(yaml_path, 'r') as f:
+        raw_cfg = yaml.safe_load(f) or {}
+
+    if 'markets' in raw_cfg:
+        return (raw_cfg.get('markets') or {}).get(symbol), yaml_path
+
+    return raw_cfg, yaml_path
+
+
+def _known_symbols() -> set[str]:
+    symbols = set(config.MARKET_CONFIGS.keys())
+    specs_path = Path('configs/market_specs.yaml')
+    if specs_path.exists():
+        with open(specs_path, 'r') as f:
+            specs = yaml.safe_load(f) or {}
+        symbols.update((specs.get('markets') or {}).keys())
+    return symbols
+
+
 def detect_symbol_from_path(data_path: str) -> str:
     path = Path(data_path)
+    known_symbols = _known_symbols()
     for part in path.parent.parts:
-        if part in config.MARKET_CONFIGS:
+        if part in known_symbols:
             return part
     import glob as _glob
     for f in _glob.glob(data_path):
         fp = Path(f)
         for part in fp.parent.parts:
-            if part in config.MARKET_CONFIGS:
+            if part in known_symbols:
                 return part
-        for known in config.MARKET_CONFIGS:
+        for known in known_symbols:
             if fp.stem == known or fp.stem.startswith(known + '_') or fp.stem.startswith(known + '.'):
                 return known
     raise RuntimeError(
         f'SYMBOL FAIL: cannot detect symbol from path {data_path}. '
-        f'No known market ({sorted(config.MARKET_CONFIGS.keys())}) '
+        f'No known market ({sorted(known_symbols)}) '
         f'found in path parts {list(path.parent.parts)} or any matched file. '
         f'Ensure data directory structure includes the symbol name '
         f'(e.g. data/ES/2024.parquet).'
     )
 
 def load_market_config(symbol: str):
-    yaml_path = config.MARKET_CONFIGS.get(symbol)
-    if not yaml_path or not Path(yaml_path).exists():
+    market_cfg, yaml_path = _read_market_config(symbol)
+    if not market_cfg:
         logger.warning(f'Market config for {symbol} not found at {yaml_path}, using global defaults.')
         return
-    with open(yaml_path, 'r') as f:
-        market_cfg = yaml.safe_load(f) or {}
     risk_cfg = market_cfg.get('risk') or {}
 
     def _cfg_value(key: str):
@@ -54,14 +77,12 @@ def get_contract_multiplier(symbol: str) -> float:
         raise RuntimeError(
             'CONTRACT FAIL: symbol is required. Cannot resolve contract multiplier.'
         )
-    yaml_path = config.MARKET_CONFIGS.get(symbol)
-    if not yaml_path or not Path(yaml_path).exists():
+    market_cfg, yaml_path = _read_market_config(symbol)
+    if not market_cfg:
         raise RuntimeError(
             f'CONTRACT FAIL: no market config found for symbol={symbol}. '
             'Cannot resolve contract multiplier.'
         )
-    with open(yaml_path, 'r') as f:
-        market_cfg = yaml.safe_load(f) or {}
     metadata = market_cfg.get('metadata') or {}
     if 'contract_multiplier' not in metadata:
         raise RuntimeError(

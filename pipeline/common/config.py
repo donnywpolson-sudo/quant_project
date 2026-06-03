@@ -285,7 +285,7 @@ class RootConfig(BaseModel):
     # -- legacy flat keys retained for module compatibility ------------------
     markets: list[str] = Field(default_factory=lambda: DEFAULT_MARKETS.copy())
     market_configs: dict = Field(
-        default_factory=lambda: {m: f"configs/markets/{m}.yaml" for m in DEFAULT_MARKETS}
+        default_factory=lambda: {m: "configs/market_specs.yaml" for m in DEFAULT_MARKETS}
     )
     use_correlation_filter: bool = False
     correlation_threshold: float = 0.75
@@ -557,7 +557,7 @@ def load_config(env: str | None = None, configs_dir: Path | None = None) -> Root
                 if "market_configs" not in merged:
                     merged["market_configs"] = {}
                 for m in merged["symbols"]:
-                    merged["market_configs"][m] = f"configs/markets/{m}.yaml"
+                    merged["market_configs"][m] = "configs/market_specs.yaml"
 
             try:
                 root_cfg = RootConfig(**merged)
@@ -599,7 +599,7 @@ def load_config(env: str | None = None, configs_dir: Path | None = None) -> Root
         if "market_configs" not in merged:
             merged["market_configs"] = {}
         for m in merged["symbols"]:
-            merged["market_configs"][m] = f"configs/markets/{m}.yaml"
+            merged["market_configs"][m] = "configs/market_specs.yaml"
 
     try:
         root_cfg = RootConfig(**merged)

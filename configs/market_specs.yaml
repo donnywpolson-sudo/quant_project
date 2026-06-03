@@ -1,0 +1,241 @@
+markets:
+  6B:
+    metadata:
+      ticker: 6B
+      contract_multiplier: 62500
+    contract_specs:
+      tick_size: 0.0001
+      tick_value: 6.25
+    risk:
+      slippage_k: 0.0008
+      vol_penalty: 0.003
+      max_leverage: 2.5
+      max_position_size: 40
+  6E:
+    metadata:
+      ticker: 6E
+      contract_multiplier: 125000
+    contract_specs:
+      tick_size: 0.00005
+      tick_value: 6.25
+    risk:
+      slippage_k: 0.0008
+      vol_penalty: 0.003
+      max_leverage: 2.5
+      max_position_size: 40
+  6J:
+    metadata:
+      ticker: 6J
+      contract_multiplier: 12500000
+    contract_specs:
+      tick_size: 0.0000005
+      tick_value: 6.25
+    risk:
+      slippage_k: 0.0008
+      vol_penalty: 0.003
+      max_leverage: 2.5
+      max_position_size: 40
+  CL:
+    metadata:
+      ticker: CL
+      contract_multiplier: 1000
+    contract_specs:
+      tick_size: 0.01
+      tick_value: 10.0
+    risk:
+      slippage_k: 0.002
+      vol_penalty: 0.005
+      max_leverage: 2.0
+      max_position_size: 30
+  ES:
+    metadata:
+      ticker: ES
+      contract_multiplier: 50
+    contract_specs:
+      tick_size: 0.25
+      tick_value: 12.5
+    risk:
+      slippage_k: 0.0005
+      vol_penalty: 0.002
+      max_leverage: 3.0
+      max_position_size: 50
+  GC:
+    metadata:
+      ticker: GC
+      contract_multiplier: 100
+    contract_specs:
+      tick_size: 0.1
+      tick_value: 10.0
+    risk:
+      slippage_k: 0.001
+      vol_penalty: 0.003
+      max_leverage: 2.5
+      max_position_size: 40
+  HE:
+    metadata:
+      ticker: HE
+      contract_multiplier: 400
+    contract_specs:
+      tick_size: 0.025
+      tick_value: 10.0
+    risk:
+      slippage_k: 0.002
+      vol_penalty: 0.006
+      max_leverage: 1.5
+      max_position_size: 20
+  HG:
+    metadata:
+      ticker: HG
+      contract_multiplier: 25000
+    contract_specs:
+      tick_size: 0.0005
+      tick_value: 12.5
+    risk:
+      slippage_k: 0.0015
+      vol_penalty: 0.004
+      max_leverage: 2.5
+      max_position_size: 35
+  LE:
+    metadata:
+      ticker: LE
+      contract_multiplier: 400
+    contract_specs:
+      tick_size: 0.025
+      tick_value: 10.0
+    risk:
+      slippage_k: 0.002
+      vol_penalty: 0.006
+      max_leverage: 1.5
+      max_position_size: 20
+  NG:
+    metadata:
+      ticker: NG
+      contract_multiplier: 10000
+    contract_specs:
+      tick_size: 0.001
+      tick_value: 10.0
+    risk:
+      slippage_k: 0.003
+      vol_penalty: 0.008
+      max_leverage: 1.5
+      max_position_size: 20
+  NQ:
+    metadata:
+      ticker: NQ
+      contract_multiplier: 20
+    contract_specs:
+      tick_size: 0.25
+      tick_value: 5.0
+    risk:
+      slippage_k: 0.0005
+      vol_penalty: 0.003
+      max_leverage: 2.5
+      max_position_size: 30
+  RTY:
+    metadata:
+      ticker: RTY
+      contract_multiplier: 50
+    contract_specs:
+      tick_size: 0.1
+      tick_value: 5.0
+    risk:
+      slippage_k: 0.001
+      vol_penalty: 0.004
+      max_leverage: 2.0
+      max_position_size: 30
+  SI:
+    metadata:
+      ticker: SI
+      contract_multiplier: 5000
+    contract_specs:
+      tick_size: 0.005
+      tick_value: 25.0
+    risk:
+      slippage_k: 0.002
+      vol_penalty: 0.006
+      max_leverage: 2.0
+      max_position_size: 25
+  SR3:
+    metadata:
+      ticker: SR3
+      contract_multiplier: 2500
+    contract_specs:
+      tick_size: 0.0025
+      tick_value: 6.25
+    risk:
+      slippage_k: 0.0002
+      vol_penalty: 0.001
+      max_leverage: 5.0
+      max_position_size: 80
+  YM:
+    metadata:
+      ticker: YM
+      contract_multiplier: 5
+    contract_specs:
+      tick_size: 1.0
+      tick_value: 5.0
+    risk:
+      slippage_k: 0.0005
+      vol_penalty: 0.002
+      max_leverage: 3.0
+      max_position_size: 50
+  ZB:
+    metadata:
+      ticker: ZB
+      contract_multiplier: 1000
+    contract_specs:
+      tick_size: 0.03125
+      tick_value: 31.25
+    risk:
+      slippage_k: 0.0002
+      vol_penalty: 0.001
+      max_leverage: 2.5
+      max_position_size: 20
+  ZC:
+    metadata:
+      ticker: ZC
+      contract_multiplier: 50
+    contract_specs:
+      tick_size: 0.25
+      tick_value: 12.5
+    risk:
+      slippage_k: 0.0015
+      vol_penalty: 0.004
+      max_leverage: 2.0
+      max_position_size: 30
+  ZN:
+    metadata:
+      ticker: ZN
+      contract_multiplier: 1000
+    contract_specs:
+      tick_size: 0.015625
+      tick_value: 15.625
+    risk:
+      slippage_k: 0.0003
+      vol_penalty: 0.0015
+      max_leverage: 4.0
+      max_position_size: 60
+  ZS:
+    metadata:
+      ticker: ZS
+      contract_multiplier: 50
+    contract_specs:
+      tick_size: 0.25
+      tick_value: 12.5
+    risk:
+      slippage_k: 0.0015
+      vol_penalty: 0.004
+      max_leverage: 2.0
+      max_position_size: 30
+  ZW:
+    metadata:
+      ticker: ZW
+      contract_multiplier: 50
+    contract_specs:
+      tick_size: 0.25
+      tick_value: 12.5
+    risk:
+      slippage_k: 0.0015
+      vol_penalty: 0.004
+      max_leverage: 2.0
+      max_position_size: 30

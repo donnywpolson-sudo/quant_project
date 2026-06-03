@@ -934,9 +934,9 @@ def _validate_backtest_output(out_dir: Path, symbol: str) -> None:
 def _contract_summary(symbol: str) -> str:
     try:
         import yaml
-        cfg_path = Path('configs') / 'markets' / f'{symbol}.yaml'
+        cfg_path = Path('configs') / 'market_specs.yaml'
         with open(cfg_path, 'r', encoding='utf-8') as f:
-            market_cfg = yaml.safe_load(f) or {}
+            market_cfg = (yaml.safe_load(f) or {}).get('markets', {}).get(symbol, {})
         multiplier = get_contract_multiplier(symbol)
         tick = market_cfg.get('contract_specs', {}).get('tick_size', 'NA')
         return f'symbol={symbol} multiplier={multiplier:g} tick={tick}'

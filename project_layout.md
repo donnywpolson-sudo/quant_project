@@ -36,7 +36,6 @@ Active config: `configs/alpha_tiered.yaml`
 
 ```text
 data/
-  market_sessions.yaml
   raw/
     manifest.json
     _manifest.csv
@@ -76,6 +75,8 @@ artifacts/
 
 configs/
   alpha_tiered.yaml
+  raw_data_validation.yaml
+  market_specs.yaml
 ```
 
 `data/validated/` currently has manifests only unless raw validation is run with
