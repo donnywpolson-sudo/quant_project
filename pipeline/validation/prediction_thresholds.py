@@ -10,6 +10,9 @@ from typing import Any
 
 import polars as pl
 
+from pipeline.analytics.aggregate import compute_backtest_metrics
+from pipeline.common.config import RootConfig
+from pipeline.execution.cost_model import attach_execution_cost_model
 from pipeline.validation.diagnostic_io import stringify_diagnostic_keys
 
 
@@ -17,6 +20,8 @@ DIAG_CSV = Path("reports/validation/prediction_threshold_diagnostics.csv")
 DIAG_JSON = Path("reports/validation/prediction_threshold_diagnostics.json")
 GRID_CSV = Path("reports/validation/threshold_candidate_grid.csv")
 GRID_JSON = Path("reports/validation/threshold_candidate_grid.json")
+ECON_CSV = Path("reports/validation/threshold_candidate_economics.csv")
+ECON_JSON = Path("reports/validation/threshold_candidate_economics.json")
 
 QUANTILES = {
     "prediction_p001": 0.001,
@@ -56,6 +61,13 @@ GRID_FIELDS = [
     "run_id", "profile", "config_env", "created_at",
     "symbol", "split", "threshold_type", "threshold_value", "long_bars", "short_bars",
     "active_bar_pct", "turnover_proxy", "current_threshold_flag",
+]
+ECON_FIELDS = [
+    "run_id", "profile", "config_env", "created_at",
+    "symbol", "split", "threshold_type", "threshold_value", "threshold_source",
+    "long_bars", "short_bars", "active_bar_pct", "turnover",
+    "gross_pnl", "net_pnl", "cost_drag", "cost_drag_pct_of_gross",
+    "pnl_per_turnover", "sharpe_annualized", "current_threshold_flag",
 ]
 
 
@@ -124,7 +136,85 @@ def write_prediction_threshold_diagnostics(
         [{**meta, **r} for r in grid],
         key_fields=["run_id", "symbol", "split", "threshold_type", "threshold_value"],
     )
+    econ = build_threshold_candidate_economics(df, grid, symbol=symbol, split=split, config=config)
+    _append_csv_json(
+        ECON_CSV,
+        ECON_JSON,
+        ECON_FIELDS,
+        [{**meta, **r} for r in econ],
+        key_fields=["run_id", "symbol", "split", "threshold_type", "threshold_value"],
+    )
     return row, grid
+
+
+def build_threshold_candidate_economics(
+    df: pl.DataFrame,
+    grid: list[dict[str, Any]],
+    *,
+    symbol: str,
+    split: str | int,
+    config: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Diagnostic-only economics for candidate thresholds; does not affect live signals."""
+    if config is None:
+        config = _minimal_config()
+    pred_col = "prediction" if "prediction" in df.columns else ("prediction_prob" if "prediction_prob" in df.columns else "")
+    target_col = getattr(getattr(config, "walkforward", object()), "walkforward_target", "target_15m_ret")
+    required = {pred_col, target_col}
+    if not pred_col or not required.issubset(set(df.columns)):
+        return [_empty_econ_row(r, symbol=symbol, split=split) for r in grid]
+
+    drop_cols = [
+        "raw_signal", "position", "position_after", "position_before", "position_delta",
+        "assumed_fill_price", "min_position_hold_bars", "ret_exec", "target_exec",
+        "target_return_exec", "target_exec_usd_per_contract", "gross_pnl", "fees",
+        "slippage", "costs", "pnl", "net_pnl", "equity_curve", "drawdown_pct",
+        "signal_entry_threshold",
+    ]
+    base = df.drop([c for c in drop_cols if c in df.columns])
+    rows = []
+    for candidate in grid:
+        threshold = float(candidate.get("threshold_value") or 0.0)
+        try:
+            simulated = base.with_columns(
+                pl.when(pl.col(pred_col).cast(pl.Float64) > threshold).then(1)
+                .when(pl.col(pred_col).cast(pl.Float64) < -threshold).then(-1)
+                .otherwise(0).alias("raw_signal"),
+                pl.lit(threshold).alias("signal_entry_threshold"),
+            )
+            simulated = attach_execution_cost_model(
+                simulated,
+                target_col=target_col,
+                config=config,
+                symbol=symbol,
+                feature_set_id="threshold_candidate_diagnostic",
+            )
+            metrics = compute_backtest_metrics(simulated)
+            gross = float(simulated["gross_pnl"].sum() or 0.0) if "gross_pnl" in simulated.columns else 0.0
+            net = float(simulated["pnl"].sum() or 0.0) if "pnl" in simulated.columns else 0.0
+            turnover = float(simulated["position_delta"].abs().sum() or 0.0) if "position_delta" in simulated.columns else 0.0
+            cost_drag = gross - net
+            rows.append({
+                "symbol": symbol,
+                "split": split,
+                "threshold_type": candidate.get("threshold_type", ""),
+                "threshold_value": threshold,
+                "threshold_source": "test_distribution_diagnostic_only",
+                "long_bars": candidate.get("long_bars", 0),
+                "short_bars": candidate.get("short_bars", 0),
+                "active_bar_pct": candidate.get("active_bar_pct", 0.0),
+                "turnover": turnover,
+                "gross_pnl": gross,
+                "net_pnl": net,
+                "cost_drag": cost_drag,
+                "cost_drag_pct_of_gross": _safe_div(cost_drag, gross),
+                "pnl_per_turnover": _safe_div(net, turnover),
+                "sharpe_annualized": metrics.get("sharpe_annualized", metrics.get("sharpe", 0.0)),
+                "current_threshold_flag": candidate.get("current_threshold_flag", False),
+            })
+        except Exception:
+            rows.append(_empty_econ_row(candidate, symbol=symbol, split=split))
+    return rows
 
 
 def print_threshold_diagnostic_summary(expected_splits: int | None = None, expected_run_id: str | None = None, allow_env_fallback: bool = False) -> None:
@@ -316,3 +406,32 @@ def _float(value: Any) -> float | str:
         return float(value)
     except Exception:
         return ""
+
+
+def _safe_div(num: float, den: float) -> float:
+    return 0.0 if abs(float(den or 0.0)) < 1e-12 else float(num) / float(den)
+
+
+def _minimal_config() -> RootConfig:
+    return RootConfig()
+
+
+def _empty_econ_row(candidate: dict[str, Any], *, symbol: str, split: str | int) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "split": split,
+        "threshold_type": candidate.get("threshold_type", ""),
+        "threshold_value": candidate.get("threshold_value", 0.0),
+        "threshold_source": "unavailable",
+        "long_bars": candidate.get("long_bars", 0),
+        "short_bars": candidate.get("short_bars", 0),
+        "active_bar_pct": candidate.get("active_bar_pct", 0.0),
+        "turnover": 0.0,
+        "gross_pnl": 0.0,
+        "net_pnl": 0.0,
+        "cost_drag": 0.0,
+        "cost_drag_pct_of_gross": 0.0,
+        "pnl_per_turnover": 0.0,
+        "sharpe_annualized": 0.0,
+        "current_threshold_flag": candidate.get("current_threshold_flag", False),
+    }

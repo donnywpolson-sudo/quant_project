@@ -328,6 +328,8 @@ def _reset_current_run_validation_diagnostics(run_id: str) -> None:
         "reports/validation/prediction_threshold_diagnostics.json",
         "reports/validation/threshold_candidate_grid.csv",
         "reports/validation/threshold_candidate_grid.json",
+        "reports/validation/threshold_candidate_economics.csv",
+        "reports/validation/threshold_candidate_economics.json",
     ]:
         Path(p).unlink(missing_ok=True)
 
