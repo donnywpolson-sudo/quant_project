@@ -348,6 +348,54 @@ profiles:
       threshold_mode: "prediction_abs_quantile"
       threshold_quantile: 0.999
 
+  tier_1_threshold_p997_CL_ES_experiment:
+    symbols: ["CL", "ES"]
+    data_years: 3
+    folds: 3
+    start_year: 2023
+    end_year: 2025
+    pipeline:
+      modeling_mode: "full_research"
+    walkforward:
+      wf_train_days: 180
+      wf_test_days: 30
+      wf_step_days: 30
+      model_type: "Ridge"
+    discovery:
+      discovery_window_days: 30
+      bootstrap_folds: 5
+      selection_freq_threshold: 0.55
+      sign_consistency_threshold: 0.55
+      min_selected_features: 5
+      max_selected_features: 30
+    execution:
+      threshold_mode: "prediction_abs_quantile"
+      threshold_quantile: 0.997
+
+  tier_1_threshold_p998_CL_ES_experiment:
+    symbols: ["CL", "ES"]
+    data_years: 3
+    folds: 3
+    start_year: 2023
+    end_year: 2025
+    pipeline:
+      modeling_mode: "full_research"
+    walkforward:
+      wf_train_days: 180
+      wf_test_days: 30
+      wf_step_days: 30
+      model_type: "Ridge"
+    discovery:
+      discovery_window_days: 30
+      bootstrap_folds: 5
+      selection_freq_threshold: 0.55
+      sign_consistency_threshold: 0.55
+      min_selected_features: 5
+      max_selected_features: 30
+    execution:
+      threshold_mode: "prediction_abs_quantile"
+      threshold_quantile: 0.998
+
   # --------------------------------------------------------------------------
   # TIER 2: Basic cross-asset validation
   # Markets: equities, rates, FX, energy, metals, grains.

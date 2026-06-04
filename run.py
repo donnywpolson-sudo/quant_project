@@ -15,7 +15,6 @@ import hashlib
 import threading
 import re
 import argparse
-import csv
 from datetime import datetime, timedelta
 from pathlib import Path
 import shutil
@@ -27,6 +26,14 @@ from pipeline.data_gate.manifest import DatasetGateError, validate_dataset_gate
 from pipeline.data_gate.preflight import DatasetPreflightError, validate_research_data_preflight
 from pipeline.data_gate.checkpoint import validate_checkpoint_stage
 from pipeline.data.classify_checkpoint import canonical_stage, classify_checkpoint
+from pipeline.run_context import RunContext
+from pipeline.orchestration.artifact_contract import (
+    artifact_failure_reasons,
+    expected_artifact_paths,
+    write_failure_reasons,
+)
+from pipeline.orchestration.child_runner import build_child_env, build_discovery_command, build_run_command  # builds pipeline.cli child commands
+from pipeline.orchestration.split_plan import assert_execution_plan_unique, split_window_parts
 from pipeline.orchestration.stage_plan import START_STAGE_NUM, build_stage_plan, normalize_start_stage
 from pipeline.audit.pipeline_coverage import stage_catalog
 from pipeline.audit.run_manifest import write_run_manifest
@@ -34,8 +41,8 @@ from pipeline.gates.deployment import run_deployment_readiness_gate
 from pipeline.walkforward.split_plan import write_wfa_split_plan
 from pipeline.walkforward.contract_debug import build_wfa_contract_debug_row, write_wfa_contract_debug_row
 from pipeline.validation.target_integrity import validate_target_integrity_root
-from pipeline.validation.prediction_thresholds import print_threshold_diagnostic_summary, validate_current_run_diagnostics
-from pipeline.validation.experiment_comparison import print_threshold_outlier_summary, write_experiment_reports
+from pipeline.validation.final_diagnostics import run_final_diagnostics
+from pipeline.validation.final_summary import build_final_safety_summary, print_final_safety_summary
 from pipeline.validation.threshold_used import threshold_used_row_count
 
 _LOG_MODE = os.environ.get('LOG_MODE', 'clean').strip().lower()
@@ -52,10 +59,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger('QuantRunner')
 _MIN_TRAIN_DAYS = 90
-_RUN_START = time.time()
-_RUN_DT = datetime.now()
-_RUN_FILE_TS = _RUN_DT.strftime('%Y-%m-%d_%H-%M-%S')
-_RUN_ID = "run_" + hashlib.sha256(str(_RUN_START).encode()).hexdigest()[:8]
+_RUN_CONTEXT = RunContext.create(_ns_cfg, profile=getattr(_ns_cfg, "ACTIVE_PROFILE", "unknown"))
+_RUN_START = _RUN_CONTEXT.run_start
+_RUN_DT = _RUN_CONTEXT.run_dt
+_RUN_FILE_TS = _RUN_CONTEXT.file_ts
+_RUN_ID = _RUN_CONTEXT.run_id
 _PER_SYMBOL_PNL_CS = {}  # {symbol: {split_id: pnl_cs}}
 _VERIFICATION_TABLE = []  # rows for the verification table printed per split
 _RUN_SPLIT_ARTIFACTS = []
@@ -874,11 +882,6 @@ def _upsert_row_by_symbol_split(rows: list[dict], row: dict) -> None:
     rows.append(row)
 
 
-def _safe_window_name(start, end) -> str:
-    raw = "_".join(str(x or "none") for x in [start, end])
-    return "".join(ch if ch.isalnum() else "-" for ch in raw)[:80]
-
-
 def _safe_iso(value) -> str | None:
     if value is None:
         return None
@@ -894,20 +897,14 @@ def _read_report_status(path: Path) -> str:
 
 
 def _expected_artifact_paths(symbol: str, split_idx: int, command: str, out_dir: Path, test_start, test_end) -> dict:
-    window = _safe_window_name(
-        test_start.isoformat() if hasattr(test_start, "isoformat") else test_start,
-        test_end.isoformat() if hasattr(test_end, "isoformat") else test_end,
+    return expected_artifact_paths(
+        symbol,
+        command,
+        out_dir,
+        test_start,
+        test_end,
+        profile=getattr(_ns_cfg, "ACTIVE_PROFILE", "profile"),
     )
-    profile = getattr(_ns_cfg, "ACTIVE_PROFILE", "profile")
-    return {
-        "backtest_results": str(out_dir / ("backtest_results_hmm.parquet" if command == "run-hmm" else "backtest_results.parquet")),
-        "oos_predictions": str(out_dir / "oos_predictions.parquet"),
-        "leakage_report": str(Path("reports") / "leakage" / f"{profile}_{symbol}_{command}_{window}.json"),
-        "execution_trace_report": str(out_dir / "execution_trace_report.json"),
-        "metrics_report": str(Path("reports") / "metrics" / f"{profile}_{symbol}_{command}_{window}_metrics_report.json"),
-        "stress_report": str(Path("reports") / "stress" / f"{profile}_{symbol}_{command}_{window}_stress_report.json"),
-        "acceptance_report": str(Path("reports") / "acceptance" / f"{profile}_{symbol}_{command}_{window}_acceptance_gate.json"),
-    }
 
 
 def _record_split_artifacts(
@@ -997,14 +994,7 @@ def _expected_runtime_rows(config: RootConfig, splits: list, files: list[Path]) 
 
 
 def _assert_execution_plan_unique(plan_rows: list[dict], symbols: list[str], splits: list) -> None:
-    expected = len(symbols) * len(splits)
-    assert len(plan_rows) == expected, (
-        f"SPLIT PLAN ROW COUNT FAIL: rows={len(plan_rows)} expected={expected} "
-        f"symbols={symbols} splits={len(splits)}"
-    )
-    keys = [(r.get("symbol"), int(r.get("split", 0))) for r in plan_rows]
-    dupes = sorted({k for k in keys if keys.count(k) > 1})
-    assert len(keys) == len(set(keys)), f"SPLIT PLAN DUPLICATE FAIL: duplicate (symbol, split) rows={dupes}"
+    assert_execution_plan_unique(plan_rows, symbols, splits)
 
 
 def _safe_numeric_feature_cols(df: pl.DataFrame, target_col: str) -> list[str]:
@@ -1105,45 +1095,8 @@ def _check_wfa_feasibility(config: RootConfig, splits: list, files: list[Path]) 
     return {"status": "PASS" if not failures else "FAIL", "checked": total, "feasible": total - len(failures), "failures": failures}
 
 
-def _prediction_pnl_missing_reason(result_row: dict, artifact_row: dict, col: str, checksum_col: str) -> str:
-    value = result_row.get(checksum_col)
-    if value not in ("missing", "all_nan", None, ""):
-        return ""
-    bt_path = Path(artifact_row.get("backtest_results") or result_row.get("path", ""))
-    if not bt_path.exists():
-        return f"{checksum_col} missing: backtest_results missing at {bt_path}"
-    try:
-        df = pl.read_parquet(bt_path)
-    except Exception as exc:
-        return f"{checksum_col} missing: cannot read backtest_results at {bt_path}: {exc}"
-    if col not in df.columns:
-        return f"{checksum_col} missing: column {col} absent in {bt_path}"
-    return f"{checksum_col} missing: column {col} all non-finite/null in {bt_path}"
-
-
 def _artifact_failure_reasons(result_row: dict, artifact_row: dict) -> list[str]:
-    reasons = []
-    if result_row.get("error"):
-        reasons.append(str(result_row["error"]))
-    for key in [
-        "backtest_results",
-        "oos_predictions",
-        "leakage_report",
-        "execution_trace_report",
-        "metrics_report",
-        "stress_report",
-        "acceptance_report",
-    ]:
-        path = artifact_row.get(key)
-        if path and not Path(path).exists():
-            reasons.append(f"missing {key}: {path}")
-    for col, checksum_col in [("prediction_prob", "pred_cs"), ("pnl", "pnl_cs")]:
-        reason = _prediction_pnl_missing_reason(result_row, artifact_row, col, checksum_col)
-        if reason:
-            reasons.append(reason)
-    if artifact_row.get("error") and artifact_row.get("error") not in reasons:
-        reasons.append(str(artifact_row["error"]))
-    return reasons
+    return artifact_failure_reasons(result_row, artifact_row)
 
 
 def _current_failure_reason_rows() -> list[dict]:
@@ -1165,35 +1118,7 @@ def _current_failure_reason_rows() -> list[dict]:
 
 
 def _write_failure_reasons(rows: list[dict]) -> tuple[Path, Path]:
-    out_dir = Path("reports") / "validation"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = out_dir / "failure_reasons.csv"
-    json_path = out_dir / "failure_reasons.json"
-    fields = [
-        "symbol",
-        "split",
-        "status",
-        "rc",
-        "command",
-        "exception_type",
-        "exception_message",
-        "stdout_tail",
-        "stderr_tail",
-        "pred_cs",
-        "pnl_cs",
-        "failure_reason",
-        "backtest_results",
-        "oos_predictions",
-        "metrics_report",
-        "acceptance_report",
-    ]
-    with csv_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({k: row.get(k, "") for k in fields})
-    json_path.write_text(json.dumps(rows, indent=2, default=str), encoding="utf-8")
-    return csv_path, json_path
+    return write_failure_reasons(rows)
 
 
 def _prepare_final_artifact_completeness(config: RootConfig, splits: list, files: list[Path]) -> dict:
@@ -1263,52 +1188,16 @@ def _prepare_final_artifact_completeness(config: RootConfig, splits: list, files
 
 
 def _final_safety_summary(config: RootConfig, total_splits: int, deployment_report: dict) -> dict:
-    counts = {"ACCEPT": 0, "REJECT": 0, "WARN": 0, "MISSING": 0}
-    for row in _RUN_SPLIT_ARTIFACTS:
-        status = row.get("acceptance_status", "MISSING")
-        counts[status if status in counts else "MISSING"] += 1
-    successful = sum(1 for r in _RUN_SPLIT_ARTIFACTS if r.get("status") == "OK")
-    expected_rows = len(config.symbols) * int(total_splits)
-    failed = max(expected_rows - successful, 0)
-    summary = {
-        "run_id": _RUN_ID,
-        "profile": _ns_cfg.ACTIVE_PROFILE,
-        "symbols": list(config.symbols),
-        "splits": total_splits,
-        "expected_symbol_split_rows": expected_rows,
-        "successful": successful,
-        "failed": failed,
-        "total_reports_written": sum(
-            1
-            for row in _RUN_SPLIT_ARTIFACTS
-            for key in ["leakage_report", "execution_trace_report", "metrics_report", "stress_report", "acceptance_report"]
-            if Path(row.get(key, "")).exists()
-        ),
-        "acceptance": counts,
-        "deployment": deployment_report.get("status", "MISSING"),
-        "deployment_mode": deployment_report.get("deployment", {}).get("mode"),
-    }
-    print("\n[FINAL SAFETY SUMMARY]", flush=True)
-    print(f"run_id={summary['run_id']}", flush=True)
-    print(f"profile={summary['profile']}", flush=True)
-    print(f"symbols={','.join(summary['symbols'])}", flush=True)
-    print(
-        f"splits={summary['splits']} expected_rows={summary['expected_symbol_split_rows']} "
-        f"successful={summary['successful']} failed={summary['failed']}",
-        flush=True,
+    summary = build_final_safety_summary(
+        run_id=_RUN_ID,
+        profile=_ns_cfg.ACTIVE_PROFILE,
+        symbols=list(config.symbols),
+        total_splits=total_splits,
+        artifact_rows=_RUN_SPLIT_ARTIFACTS,
+        deployment_report=deployment_report,
     )
-    print(
-        "acceptance: "
-        f"ACCEPT={counts['ACCEPT']} REJECT={counts['REJECT']} WARN={counts['WARN']} MISSING={counts['MISSING']}",
-        flush=True,
-    )
-    print(f"deployment={summary['deployment']} mode={summary['deployment_mode']}", flush=True)
+    print_final_safety_summary(summary)
     return summary
-    if _PROGRESS.verbose:
-        _PROGRESS.flush_stages()
-        _print_split_result(row)
-    else:
-        _print_clean_split_result(row)
 
 
 def _failed_result_row(
@@ -1537,12 +1426,7 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
     for f in test_files:
         dst = test_dir / f.parent.name / f.name
         _stage_file(f, dst)
-    env = os.environ.copy()
-    env['PARENT_RUN_ID'] = _RUN_ID
-    env['QUANT_RUN_ID'] = _RUN_ID
-    env['QUANT_RUN_PROFILE'] = getattr(_ns_cfg, 'ACTIVE_PROFILE', '')
-    env['TQDM_DISABLE'] = '1'
-    env['PYTHONIOENCODING'] = 'utf-8'
+    env = build_child_env(os.environ, run_id=_RUN_ID, profile=getattr(_ns_cfg, 'ACTIVE_PROFILE', ''))
     per_symbol = {}
     for symbol in config.symbols:
         symbol_test_files = sorted([p for p in test_files if p.parent.name == symbol])
@@ -1579,10 +1463,12 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
                     f'MULTI-SYMBOL DISCOVERY FAIL: no train files for symbol={symbol} '
                     f'in {train_dir}. Refusing to use a cross-symbol manifest.'
                 )
-            discover_cmd = [sys.executable, '-m', 'pipeline.cli', 'discover',
-                            '--data', train_glob, '--out', str(manifest_path)]
-            if train_start and train_end:
-                discover_cmd.extend(['--start', train_start.isoformat(), '--end', train_end.isoformat()])
+            discover_cmd = build_discovery_command(
+                train_glob,
+                str(manifest_path),
+                train_start=train_start,
+                train_end=train_end,
+            )
             _raw_log(f'[DISCOVERY-CMD] symbol={symbol} {" ".join(discover_cmd)}')
             _run_subprocess_streaming(discover_cmd, env)
             time.sleep(0.2)
@@ -1607,12 +1493,16 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
         hmm_enabled = bool(getattr(getattr(config, 'hmm', None), 'enabled', False))
         cli_action = 'run-hmm' if hmm_enabled else 'run'
         _raw_log(f'[RUN-MODE] symbol={symbol} split={split_idx} hmm_enabled={str(hmm_enabled).lower()} cli={cli_action}')
-        cmd = [sys.executable, '-m', 'pipeline.cli', cli_action, '--data', test_data_arg,
-               '--manifest', str(manifest_path), '--out', str(out_dir)]
-        if train_start and train_end:
-            cmd.extend(['--train-start', train_start.isoformat(), '--train-end', train_end.isoformat()])
-        if test_start and test_end:
-            cmd.extend(['--start', test_start.isoformat(), '--end', test_end.isoformat()])
+        cmd = build_run_command(
+            action=cli_action,
+            data_arg=test_data_arg,
+            manifest_path=str(manifest_path),
+            out_dir=str(out_dir),
+            train_start=train_start,
+            train_end=train_end,
+            test_start=test_start,
+            test_end=test_end,
+        )
         wf_mode = getattr(config, 'WF_MODE', '')
         if wf_mode == 'outer_split':
             assert train_start and train_end, 'outer_split mode but train_start/train_end not set'
@@ -1687,12 +1577,16 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
             )
             # Safe fallback: retry with plain run (no HMM)
             logger.info('Falling back to non-HMM run for %s split=%d', symbol, split_idx)
-            cmd_fb = [sys.executable, '-m', 'pipeline.cli', 'run', '--data', str(f),
-                       '--manifest', str(manifest_path), '--out', str(out_dir)]
-            if train_start and train_end:
-                cmd_fb.extend(['--train-start', train_start.isoformat(), '--train-end', train_end.isoformat()])
-            if test_start and test_end:
-                cmd_fb.extend(['--start', test_start.isoformat(), '--end', test_end.isoformat()])
+            cmd_fb = build_run_command(
+                action='run',
+                data_arg=str(f),
+                manifest_path=str(manifest_path),
+                out_dir=str(out_dir),
+                train_start=train_start,
+                train_end=train_end,
+                test_start=test_start,
+                test_end=test_end,
+            )
             try:
                 _run_subprocess_streaming(cmd_fb, env)
                 _verify_threshold_used_post_child(config, symbol, split_idx)
@@ -2006,11 +1900,7 @@ if __name__ == '__main__':
         logging.getLogger().setLevel(logging.DEBUG)
     try:
         for i, split_data in enumerate(splits, 1):
-            train, test = split_data[0], split_data[1]
-            train_start = split_data[2] if len(split_data) > 2 else None
-            train_end   = split_data[3] if len(split_data) > 3 else None
-            test_start  = split_data[4] if len(split_data) > 4 else None
-            test_end    = split_data[5] if len(split_data) > 5 else None
+            train, test, train_start, train_end, test_start, test_end = split_window_parts(split_data)
             process_split(train, test, files, config, i, total, train_start, train_end, test_start, test_end)
     finally:
         artifact_completeness = _prepare_final_artifact_completeness(config, splits, files)
@@ -2033,26 +1923,15 @@ if __name__ == '__main__':
                 f"ARTIFACT COMPLETENESS FAIL: see {artifact_completeness['failure_reasons_csv']}"
             )
         expected_rows = len(config.symbols) * len(splits)
-        if getattr(config.pipeline, "modeling_mode", "minimal_compatible") == "full_research":
-            validate_current_run_diagnostics(
-                expected_rows=expected_rows,
-                require_threshold_used=_threshold_used_required(config),
-                expected_run_id=_RUN_ID,
-                allow_env_fallback=False,
-            )
-            print_threshold_diagnostic_summary(
-                expected_splits=expected_rows,
-                expected_run_id=_RUN_ID,
-                allow_env_fallback=False,
-            )
-            _, threshold_outliers = write_experiment_reports(
-                run_id=_RUN_ID,
-                profile=getattr(_ns_cfg, "ACTIVE_PROFILE", ""),
-                expected_rows=expected_rows,
-                verification_rows=_VERIFICATION_TABLE,
-                artifact_rows=_RUN_SPLIT_ARTIFACTS,
-            )
-            print_threshold_outlier_summary(threshold_outliers)
+        run_final_diagnostics(
+            config=config,
+            run_id=_RUN_ID,
+            profile=getattr(_ns_cfg, "ACTIVE_PROFILE", ""),
+            expected_rows=expected_rows,
+            require_threshold_used=_threshold_used_required(config),
+            verification_rows=_VERIFICATION_TABLE,
+            artifact_rows=_RUN_SPLIT_ARTIFACTS,
+        )
         deployment_report = run_deployment_readiness_gate(config)
         final_summary = _final_safety_summary(config, total, deployment_report)
         write_run_manifest(
