@@ -38,6 +38,7 @@ START_STAGE_TO_STAGE_INDEX = {
     "labeled": 10,
     "baseline_feature_matrix": 12,
     "expanded_feature_matrix": 20,
+    "final_wfa": 24,
 }
 
 WFA_READY_START_STAGES = {"baseline_feature_matrix", "expanded_feature_matrix"}
@@ -68,9 +69,9 @@ def stage_contracts(target_col: str = "target_15m_ret") -> list[StageContract]:
         StageContract(20, by_num[20].name, ("data/feature_matrices/baseline",), ("data/feature_matrices/expanded",), ("ts_event", target_col, "target_valid"), ("ts_event", target_col, "target_valid"), "feature_expansion", True, True, (12,)),
         StageContract(21, by_num[21].name, ("data/feature_matrices/expanded",), ("reports/validation/stage_21_feature_discovery_audit_report.json",), (target_col,), (), "feature_discovery", False, False, (20,)),
         StageContract(22, by_num[22].name, ("data/feature_matrices/expanded",), ("reports/validation/stage_22_train_only_selection_audit_report.json",), (target_col,), (), "train_only_feature_selection", False, False, (21,)),
-        StageContract(23, by_num[23].name, ("reports/validation/stage_22_train_only_selection_audit_report.json",), ("data/frozen_features/**/*.json",), (), (), "frozen_feature_set", True, False, (22,)),
-        StageContract(24, by_num[24].name, ("data/frozen_features/**/*.json", "data/feature_matrices/expanded"), ("reports/validation/stage_24_final_wfa_backtest_results.parquet",), ("ts_event", target_col, "target_valid"), (), "final_wfa", False, False, (23,)),
-        StageContract(25, by_num[25].name, ("reports/validation/stage_24_final_wfa_backtest_results.parquet",), ("reports/validation/stage_25_final_oos_predictions.parquet",), ("prediction",), ("prediction",), "final_oos_predictions", False, False, (24,)),
+        StageContract(23, by_num[23].name, ("reports/validation/stage_22_train_only_selection_audit_report.json",), ("data/frozen_features/phase5_v1/feature_cols.json", "data/frozen_features/phase5_v1/selected_features.csv", "data/frozen_features/phase5_v1/rejected_features.csv", "data/frozen_features/phase5_v1/manifest.json"), (), (), "frozen_feature_set", True, False, (22,)),
+        StageContract(24, by_num[24].name, ("data/frozen_features/phase5_v1/feature_cols.json", "data/feature_matrices/expanded"), ("reports/validation/stage_24_final_wfa_backtest_results.parquet",), ("ts_event", target_col, "target_valid"), (), "final_wfa", False, False, (23,)),
+        StageContract(25, by_num[25].name, ("reports/validation/stage_24_final_wfa_backtest_results.parquet",), ("reports/validation/stage_25_final_oos_predictions.parquet",), ("run_id", "profile", "symbol", "split", "timestamp", "prediction", target_col), ("prediction",), "final_oos_predictions", False, False, (24,)),
         StageContract(26, by_num[26].name, ("reports/validation/stage_25_final_oos_predictions.parquet",), ("reports/validation/stage_26_final_metrics_diagnostics_audit_report.json",), (), (), "final_metrics", False, False, (25,)),
         StageContract(27, by_num[27].name, ("reports/validation/stage_26_final_metrics_diagnostics_audit_report.json",), ("reports/validation/stage_27_strategy_acceptance_audit_report.json",), (), (), "strategy_acceptance_gate", False, False, (26,)),
     ]

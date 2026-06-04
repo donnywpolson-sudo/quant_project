@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,9 @@ import polars as pl
 
 from pipeline.stage_contract import stage_contracts
 from pipeline.validation.diagnostic_io import write_csv_json
+from pipeline.features.frozen import validate_frozen_feature_set
+from pipeline.validation.final_oos import FINAL_OOS_PREDICTIONS, FINAL_WFA_BACKTEST, validate_final_oos_predictions
+from pipeline.validation.final_lineage import validate_lineage_freshness
 
 
 PIPELINE_FLOW_AUDIT_CSV = Path("reports/validation/pipeline_flow_audit.csv")
@@ -64,6 +68,45 @@ def build_pipeline_status(config: Any, *, data_root: str | None = None) -> list[
             upstream=upstream,
             stats=stats,
         )
+        if contract.stage_index == 23 and upstream == "PASS":
+            frozen = validate_frozen_feature_set(config=config)
+            status = str(frozen.get("status"))
+            reason = str(frozen.get("reason"))
+            outputs_present = status != "MISSING"
+            freshness = "valid" if status == "PASS" else ("missing" if status == "MISSING" else "invalid")
+        if contract.stage_index == 25 and upstream == "PASS":
+            final_oos = validate_final_oos_predictions(
+                target_col=target_col,
+                expected_symbols=[str(s) for s in getattr(config, "symbols", []) or []],
+                expected_splits=_expected_split_count(),
+                source_path=FINAL_WFA_BACKTEST,
+            )
+            status = str(final_oos.get("status"))
+            reason = _final_oos_reason(final_oos)
+            outputs_present = status != "MISSING"
+            freshness = "valid" if status == "PASS" else ("missing" if status == "MISSING" else "invalid")
+            if final_oos.get("row_count") not in ("", None):
+                stats["row_count"] = str(final_oos.get("row_count"))
+        if contract.stage_index == 26 and upstream == "PASS":
+            lineage = validate_lineage_freshness(
+                artifact_path="reports/validation/stage_26_final_metrics_diagnostics_audit_report.json",
+                source_artifact_path=FINAL_OOS_PREDICTIONS,
+                stage_name="Stage 26 FINAL METRICS + DIAGNOSTICS",
+            )
+            if lineage["status"] != "PASS":
+                status = str(lineage["status"])
+                reason = f"{lineage['reason']}; repair_command={_repair_command(contract.stage_index, target_col)}"
+                freshness = "stale" if status == "STALE" else freshness
+        if contract.stage_index == 27 and upstream == "PASS":
+            lineage = validate_lineage_freshness(
+                artifact_path="reports/validation/stage_27_strategy_acceptance_audit_report.json",
+                source_artifact_path="reports/validation/stage_26_final_metrics_diagnostics_audit_report.json",
+                stage_name="Stage 27 STRATEGY ACCEPT / REJECT GATE",
+            )
+            if lineage["status"] != "PASS":
+                status = str(lineage["status"])
+                reason = f"{lineage['reason']}; repair_command={_repair_command(contract.stage_index, target_col)}"
+                freshness = "stale" if status == "STALE" else freshness
         status_by_stage[contract.stage_index] = status
 
         row = {
@@ -132,7 +175,7 @@ def print_pipeline_status(rows: list[dict[str, Any]]) -> None:
     if final_ready:
         print("Pipeline is final-strategy-ready", flush=True)
     else:
-        print("Pipeline is NOT final-strategy-ready", flush=True)
+        print(f"Pipeline is NOT final-strategy-ready: {_final_not_ready_reason(rows)}", flush=True)
 
 
 def _status_for(rows: list[dict[str, Any]], stage_index: int) -> str:
@@ -140,6 +183,24 @@ def _status_for(rows: list[dict[str, Any]], stage_index: int) -> str:
         if str(row.get("stage_index")) == str(stage_index):
             return str(row.get("status"))
     return "MISSING"
+
+
+def _row_for(rows: list[dict[str, Any]], stage_index: int) -> dict[str, Any]:
+    for row in rows:
+        if str(row.get("stage_index")) == str(stage_index):
+            return row
+    return {}
+
+
+def _final_not_ready_reason(rows: list[dict[str, Any]]) -> str:
+    if any(_status_for(rows, i) == "STALE" for i in (26, 27)):
+        return "final metrics/gate stale relative to Stage 25"
+    for i in range(24, 28):
+        status = _status_for(rows, i)
+        if status != "PASS":
+            row = _row_for(rows, i)
+            return f"stage {i} {status}: {row.get('reason', '')}"
+    return "unknown"
 
 
 def _resolve_path(raw: str, config: Any, data_root: str | None) -> Path:
@@ -193,7 +254,7 @@ def _parquet_files(paths: list[Path], config: Any) -> list[Path]:
 def _in_config_scope(path: Path, config: Any) -> bool:
     symbols = set(str(s) for s in getattr(config, "symbols", []) or [])
     parts = set(path.parts)
-    if symbols and not (symbols & parts):
+    if symbols and ("data" in parts or "output" in parts) and not (symbols & parts):
         return False
     try:
         year = int(path.stem)
@@ -267,7 +328,7 @@ def _upstream_status(deps: tuple[int, ...], status_by_stage: dict[int, str]) -> 
     statuses = [status_by_stage.get(dep, "MISSING") for dep in deps]
     if all(s == "PASS" for s in statuses):
         return "PASS"
-    if any(s == "FAIL" for s in statuses):
+    if any(s in {"FAIL", "STALE"} for s in statuses):
         return "FAIL"
     if any(s in {"MISSING", "SKIPPED"} for s in statuses):
         return "MISSING"
@@ -307,7 +368,32 @@ def _repair_command(stage_index: int, target_col: str) -> str:
     if stage_index in {9, 10, 11}:
         return "python run.py --from-stage causally_gated_normalized --data-root data\\causally_gated_normalized"
     if stage_index >= 20:
-        return "final stages require expanded features and a frozen train-only feature set before final WFA"
+        return "no supported standalone final-stage regeneration command found; rerun the supported final pipeline when implemented"
     if target_col:
         return "regenerate upstream artifact for this stage"
     return ""
+
+
+def _final_oos_reason(report: dict[str, Any]) -> str:
+    if report.get("status") == "PASS":
+        return "ok"
+    return (
+        f"{report.get('reason')}; artifact_path={report.get('artifact_path')}; "
+        f"available_columns={report.get('available_columns')}; "
+        f"required_columns={report.get('required_columns')}; "
+        f"producing_stage={report.get('producing_stage')}; "
+        f"regenerate_command={report.get('regenerate_command')}"
+    )
+
+
+def _expected_split_count() -> int | None:
+    path = Path("reports/validation/wfa_contract_debug.csv")
+    if not path.exists():
+        return None
+    try:
+        with path.open(newline="", encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+        splits = {str(r.get("split")) for r in rows if str(r.get("split") or "").isdigit()}
+        return len(splits) or None
+    except Exception:
+        return None

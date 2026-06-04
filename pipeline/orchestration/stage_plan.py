@@ -13,6 +13,7 @@ START_STAGE_NUM = {
     "labeled": 11,
     "baseline_feature_matrix": 14,
     "expanded_feature_matrix": 21,
+    "final_wfa": 24,
 }
 
 
@@ -25,6 +26,8 @@ def normalize_start_stage(stage: str | None) -> str:
         "casually_gated_normalized": "causally_gated_normalized",
         "baseline_matrix": "baseline_feature_matrix",
         "expanded_matrix": "expanded_feature_matrix",
+        "final": "final_wfa",
+        "final_wfa_with_frozen_features": "final_wfa",
     }
     return aliases.get(raw, raw)
 
@@ -50,4 +53,3 @@ def build_stage_plan(start_stage: str, config: Any) -> list[dict]:
             "skip_reason": f"start_stage={start_stage}" if s.number < first_pending else "",
         })
     return rows
-
