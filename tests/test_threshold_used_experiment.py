@@ -35,6 +35,16 @@ def test_experimental_profile_uses_p999_quantile_mode():
     assert cfg.execution.threshold_quantile == 0.999
 
 
+def test_fixed_005_experimental_profile_config_and_expected_rows():
+    _reset_config_loader()
+    cfg = config_module.load_config("tier_1_fixed_005_experiment")
+    assert list(cfg.symbols) == ["ES", "CL", "ZN"]
+    assert cfg.execution.threshold_mode == "fixed"
+    assert cfg.execution.prediction_entry_threshold == 0.05
+    assert cfg.execution.threshold_quantile is None
+    assert len(cfg.symbols) * 30 == 90
+
+
 def test_cl_es_p999_experimental_profile_config_and_expected_rows():
     _reset_config_loader()
     cfg = config_module.load_config("tier_1_threshold_p999_CL_ES_experiment")
