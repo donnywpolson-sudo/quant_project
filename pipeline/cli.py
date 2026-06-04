@@ -68,6 +68,13 @@ def _read_data(pattern: str, start: str | None = None, end: str | None = None) -
     return df.sort("ts_event") if "ts_event" in df.columns else df
 
 
+def _matched_data_paths(pattern: str | None) -> list[str]:
+    if not pattern:
+        return []
+    paths = sorted(Path().glob(pattern)) if any(ch in str(pattern) for ch in "*?[]") else [Path(pattern)]
+    return [str(p) for p in paths]
+
+
 def _parse_like_ts(value: str, dtype: pl.DataType) -> Any:
     if dtype in (pl.Int64, pl.Int32, pl.UInt64, pl.UInt32):
         return int(float(value))
@@ -357,7 +364,10 @@ def cmd_run(args: argparse.Namespace, hmm: bool = False) -> None:
     leakage = run_leakage_audit(df, features, target_col, context={"out": str(leakage_path), "symbol": symbol, "command": command})
     if cfg.leakage_audit.fail_on_error and leakage["status"] == "FAIL":
         raise SystemExit(f"LEAKAGE FAIL: {leakage_path}")
-    split_id = Path(out_dir).name.split("_")[-1] if "split" in Path(out_dir).name else "1"
+    import re
+
+    m_split = re.search(r"(?:^|_)split_(\d+)(?:_|$)", Path(out_dir).name)
+    split_id = m_split.group(1) if m_split else "1"
     modeling_context = {
         "config": cfg,
         "symbol": symbol,
@@ -368,6 +378,8 @@ def cmd_run(args: argparse.Namespace, hmm: bool = False) -> None:
         "train_end": args.train_end,
         "test_start": args.start,
         "test_end": args.end,
+        "data_root": args.data,
+        "input_files": _matched_data_paths(args.data),
     }
     modeling_df = df
     if modeling_mode == "full_research":
@@ -376,6 +388,8 @@ def cmd_run(args: argparse.Namespace, hmm: bool = False) -> None:
             raise SystemExit("FULL_RESEARCH MODELING FAIL: missing train data path in discovery manifest")
         train_df = _add_basic_features(_read_data(train_data, args.train_start, args.train_end))
         modeling_df = pl.concat([train_df, df], how="diagonal_relaxed")
+        modeling_context["train_data_root"] = train_data
+        modeling_context["input_files"] = _matched_data_paths(train_data) + _matched_data_paths(args.data)
     result_path = out_dir / ("backtest_results_hmm.parquet" if hmm else "backtest_results.parquet")
     result_meta = build_cache_metadata(
         result_path,

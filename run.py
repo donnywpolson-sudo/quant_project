@@ -32,6 +32,7 @@ from pipeline.audit.pipeline_coverage import stage_catalog
 from pipeline.audit.run_manifest import write_run_manifest
 from pipeline.gates.deployment import run_deployment_readiness_gate
 from pipeline.walkforward.split_plan import write_wfa_split_plan
+from pipeline.walkforward.contract_debug import build_wfa_contract_debug_row, write_wfa_contract_debug_row
 
 _LOG_MODE = os.environ.get('LOG_MODE', 'clean').strip().lower()
 if _LOG_MODE not in {'clean', 'verbose', 'debug'}:
@@ -571,6 +572,20 @@ def _validate_symbol_data(f: Path, config) -> bool:
     return True
 
 
+def _stage_file(src: Path, dst: Path) -> None:
+    """Refresh per-split staging files so subprocesses never read stale copies."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    if os.name != 'nt':
+        try:
+            os.symlink(src.resolve(), dst)
+            return
+        except Exception:
+            pass
+    shutil.copy2(src, dst)
+
+
 def _log_subprocess_failure(cmd: list, returncode: int, stderr_text: str, stdout_text: str,
                             log_dir: Path, symbol: str, split_idx: int, stage: str) -> None:
     """Persist full subprocess failure output to a deterministic log file."""
@@ -845,6 +860,12 @@ def _safe_window_name(start, end) -> str:
     return "".join(ch if ch.isalnum() else "-" for ch in raw)[:80]
 
 
+def _safe_iso(value) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
 def _read_report_status(path: Path) -> str:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -855,8 +876,8 @@ def _read_report_status(path: Path) -> str:
 
 def _expected_artifact_paths(symbol: str, split_idx: int, command: str, out_dir: Path, test_start, test_end) -> dict:
     window = _safe_window_name(
-        test_start.isoformat() if test_start else None,
-        test_end.isoformat() if test_end else None,
+        test_start.isoformat() if hasattr(test_start, "isoformat") else test_start,
+        test_end.isoformat() if hasattr(test_end, "isoformat") else test_end,
     )
     profile = getattr(_ns_cfg, "ACTIVE_PROFILE", "profile")
     return {
@@ -892,10 +913,10 @@ def _record_split_artifacts(
     row = {
         "split": split_idx,
         "symbol": symbol,
-        "train_start": train_start.isoformat() if train_start else None,
-        "train_end": train_end.isoformat() if train_end else None,
-        "test_start": test_start.isoformat() if test_start else None,
-        "test_end": test_end.isoformat() if test_end else None,
+        "train_start": _safe_iso(train_start),
+        "train_end": _safe_iso(train_end),
+        "test_start": _safe_iso(test_start),
+        "test_end": _safe_iso(test_end),
         "cli_command": command,
         "status": status,
         "error": error,
@@ -942,10 +963,10 @@ def _expected_runtime_rows(config: RootConfig, splits: list, files: list[Path]) 
                     "symbol": symbol,
                     "test_file": str(test_file) if test_file else "",
                     "missing_test_file": test_file is None,
-                    "train_start": train_start.isoformat() if train_start else None,
-                    "train_end": train_end.isoformat() if train_end else None,
-                    "test_start": test_start.isoformat() if test_start else None,
-                    "test_end": test_end.isoformat() if test_end else None,
+                    "train_start": _safe_iso(train_start),
+                    "train_end": _safe_iso(train_end),
+                    "test_start": _safe_iso(test_start),
+                    "test_end": _safe_iso(test_end),
                     "cli_command": command,
                     "out_dir": str(out_dir),
                     "test_file_count": len(symbol_files),
@@ -965,6 +986,104 @@ def _assert_execution_plan_unique(plan_rows: list[dict], symbols: list[str], spl
     keys = [(r.get("symbol"), int(r.get("split", 0))) for r in plan_rows]
     dupes = sorted({k for k in keys if keys.count(k) > 1})
     assert len(keys) == len(set(keys)), f"SPLIT PLAN DUPLICATE FAIL: duplicate (symbol, split) rows={dupes}"
+
+
+def _safe_numeric_feature_cols(df: pl.DataFrame, target_col: str) -> list[str]:
+    excluded = {
+        "ts_event", "date", "session", "session_id", "session_date", "symbol", "market",
+        "session_timezone", "session_calendar_accuracy", "rtype", "publisher_id", "instrument_id",
+        "open", "high", "low", "close", "volume", "prediction_time", "earliest_execution_time",
+        "execution_time", "non_model_metadata_columns", target_col,
+    }
+    return [
+        c for c, dtype in zip(df.columns, df.dtypes)
+        if dtype.is_numeric()
+        and c not in excluded
+        and not c.startswith(("target_", "label_", "future_", "continuous_"))
+    ]
+
+
+def _read_symbol_split_frame(paths: list[Path], start=None, end=None) -> pl.DataFrame:
+    frames = []
+    for p in paths:
+        df = pl.read_parquet(p)
+        if "ts_event" in df.columns:
+            dtype = df["ts_event"].dtype
+            if start is not None:
+                df = df.filter(pl.col("ts_event") >= pl.lit(start).cast(dtype))
+            if end is not None:
+                df = df.filter(pl.col("ts_event") < pl.lit(end).cast(dtype))
+        frames.append(df)
+    return pl.concat(frames, how="diagonal_relaxed") if frames else pl.DataFrame()
+
+
+def _check_wfa_feasibility(config: RootConfig, splits: list, files: list[Path]) -> dict:
+    """Fail-fast coverage/contract check before launching subprocesses."""
+    target_col = getattr(_ns_cfg, "WALKFORWARD_TARGET", getattr(config.walkforward, "walkforward_target", "target_15m_ret"))
+    profile = getattr(_ns_cfg, "ACTIVE_PROFILE", "profile")
+    command = "run-hmm" if bool(getattr(getattr(config, "hmm", None), "enabled", False)) else "run"
+    failures = []
+    total = 0
+    for split_idx, split_data in enumerate(splits, 1):
+        train_years, test_years = split_data[0], split_data[1]
+        train_start = split_data[2] if len(split_data) > 2 else None
+        train_end = split_data[3] if len(split_data) > 3 else None
+        test_start = split_data[4] if len(split_data) > 4 else None
+        test_end = split_data[5] if len(split_data) > 5 else None
+        for symbol in config.symbols:
+            total += 1
+            train_files = sorted([p for p in files if p.parent.name == symbol and int(p.stem) in train_years])
+            test_files = sorted([p for p in files if p.parent.name == symbol and int(p.stem) in test_years])
+            test_year_label = "_".join(str(p.stem) for p in test_files) or "missing"
+            out_dir = Path("output") / symbol / f"{test_year_label}_split_{split_idx}_{profile}"
+            try:
+                train_df = _read_symbol_split_frame(train_files, train_start, train_end)
+                test_df = _read_symbol_split_frame(test_files, test_start, test_end)
+                df = pl.concat([train_df, test_df], how="diagonal_relaxed") if train_df.height or test_df.height else pl.DataFrame()
+                features = _safe_numeric_feature_cols(df, target_col) if df.height else []
+                row = build_wfa_contract_debug_row(
+                    df,
+                    feature_cols=features,
+                    target_col=target_col,
+                    train_start=train_start,
+                    train_end=train_end,
+                    test_start=test_start,
+                    test_end=test_end,
+                    context={
+                        "config": config,
+                        "symbol": symbol,
+                        "split_id": split_idx,
+                        "data_root": config.data.root,
+                        "input_files": [str(p) for p in train_files + test_files],
+                    },
+                )
+            except Exception as exc:
+                row = {
+                    "symbol": symbol,
+                    "split": split_idx,
+                    "reason": f"wfa feasibility diagnostic failed: {type(exc).__name__}: {exc}",
+                }
+            if row.get("reason") != "PASS":
+                write_wfa_contract_debug_row(row)
+                paths = _expected_artifact_paths(symbol, split_idx, command, out_dir, test_start, test_end)
+                error = f"FULL_RESEARCH MODELING FAIL: {row.get('reason')}"
+                _record_split_result(_failed_result_row(split_idx, symbol, out_dir, error=error))
+                _record_split_artifacts(
+                    symbol,
+                    split_idx,
+                    command,
+                    out_dir,
+                    train_start,
+                    train_end,
+                    test_start,
+                    test_end,
+                    "FAILED",
+                    error=error,
+                )
+                failures.append({**row, **paths})
+    if failures:
+        _write_failure_reasons(_current_failure_reason_rows())
+    return {"status": "PASS" if not failures else "FAIL", "checked": total, "feasible": total - len(failures), "failures": failures}
 
 
 def _prediction_pnl_missing_reason(result_row: dict, artifact_row: dict, col: str, checksum_col: str) -> str:
@@ -1006,6 +1125,24 @@ def _artifact_failure_reasons(result_row: dict, artifact_row: dict) -> list[str]
     if artifact_row.get("error") and artifact_row.get("error") not in reasons:
         reasons.append(str(artifact_row["error"]))
     return reasons
+
+
+def _current_failure_reason_rows() -> list[dict]:
+    rows = []
+    artifact_by_key = {(r.get("symbol"), int(r.get("split", 0))): r for r in _RUN_SPLIT_ARTIFACTS}
+    for result_row in sorted(_VERIFICATION_TABLE, key=lambda r: (str(r.get("symbol")), int(r.get("split", 0)))):
+        key = (result_row.get("symbol"), int(result_row.get("split", 0)))
+        artifact_row = artifact_by_key.get(key, {})
+        reasons = _artifact_failure_reasons(result_row, artifact_row)
+        if not reasons and result_row.get("status") == "OK":
+            continue
+        row = dict(result_row)
+        row["failure_reason"] = "; ".join(reasons)
+        for diag_key in ["rc", "command", "stdout_tail", "stderr_tail", "exception_type", "exception_message"]:
+            if not row.get(diag_key) and artifact_row.get(diag_key):
+                row[diag_key] = artifact_row.get(diag_key)
+        rows.append(row)
+    return rows
 
 
 def _write_failure_reasons(rows: list[dict]) -> tuple[Path, Path]:
@@ -1360,29 +1497,12 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
     logger.info('Preparing TRAIN dataset for years %s', train_years)
     for f in train_files:
         dst = train_dir / f'{f.parent.name}_{f.name}'
-        if dst.exists():
-            continue
-        if os.name != 'nt':
-            try:
-                os.symlink(f.resolve(), dst)
-                continue
-            except Exception:
-                pass
-        shutil.copy2(f, dst)
+        _stage_file(f, dst)
     test_dir = Path('output') / f"test_{'_'.join(map(str, test_years))}_split_{split_idx}"
     test_dir.mkdir(parents=True, exist_ok=True)
     for f in test_files:
         dst = test_dir / f.parent.name / f.name
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        if dst.exists():
-            continue
-        if os.name != 'nt':
-            try:
-                os.symlink(f.resolve(), dst)
-                continue
-            except Exception:
-                pass
-        shutil.copy2(f, dst)
+        _stage_file(f, dst)
     env = os.environ.copy()
     env['TQDM_DISABLE'] = '1'
     env['PYTHONIOENCODING'] = 'utf-8'
@@ -1811,6 +1931,21 @@ if __name__ == '__main__':
     execution_plan_rows = _expected_runtime_rows(config, splits, files)
     _assert_execution_plan_unique(execution_plan_rows, list(config.symbols), splits)
     write_wfa_split_plan(splits, files, config)
+    if getattr(config.pipeline, "modeling_mode", "minimal_compatible") == "full_research":
+        feasibility = _check_wfa_feasibility(config, splits, files)
+        if feasibility["status"] != "PASS":
+            expected_rows = len(config.symbols) * len(splits)
+            print(
+                f"WFA FEASIBILITY FAIL: feasible={feasibility['feasible']} requested={feasibility['checked']} "
+                f"expected_rows={expected_rows} details=reports\\validation\\wfa_contract_debug.csv",
+                flush=True,
+            )
+            first = feasibility["failures"][0]
+            raise SystemExit(
+                f"WFA FEASIBILITY FAIL: profile requested {len(splits)} splits but only "
+                f"{feasibility['feasible'] // max(len(config.symbols), 1)} split-slots are feasible; "
+                f"first symbol={first.get('symbol')} split={first.get('split')} reason={first.get('reason')}"
+            )
     total = len(splits)
     print(
         f'[RUN] env={_ns_cfg.ACTIVE_PROFILE} profile={_ns_cfg.ACTIVE_PROFILE} '

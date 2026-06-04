@@ -9,6 +9,7 @@ from pipeline.features.discovery import select_features_train_only
 from pipeline.features.engine import load_or_build_feature_target_matrix
 from pipeline.features.preprocessing import fit_apply_train_scaler
 from pipeline.execution.cost_model import attach_execution_cost_model
+from pipeline.walkforward.contract_debug import diagnose_and_write_wfa_contract_failure
 from pipeline.walkforward.walkforward import apply_walkforward_contract
 
 
@@ -38,7 +39,18 @@ def run_full_research_modeling(
     train = train.drop_nulls([target_col])
     test = test.drop_nulls([target_col])
     if train.is_empty() or test.is_empty():
-        raise RuntimeError("FULL_RESEARCH MODELING FAIL: empty train/test after walkforward contract")
+        diag = diagnose_and_write_wfa_contract_failure(
+            df,
+            feature_cols=safe_features,
+            target_col=target_col,
+            train_start=train_start,
+            train_end=train_end,
+            test_start=test_start,
+            test_end=test_end,
+            context=context,
+        )
+        reason = diag.get("reason") or "empty train/test after walkforward contract"
+        raise RuntimeError(f"FULL_RESEARCH MODELING FAIL: {reason}")
     selected, selector_artifact = select_features_train_only(
         train,
         test,
