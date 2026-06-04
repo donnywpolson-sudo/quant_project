@@ -15,6 +15,7 @@ import hashlib
 import threading
 import re
 import argparse
+import csv
 from datetime import datetime, timedelta
 from pathlib import Path
 import shutil
@@ -769,6 +770,24 @@ def _extract_error_summary(*texts) -> str:
     return 'unknown error'
 
 
+def _tail_text(text, max_lines: int = 40, max_chars: int = 4000) -> str:
+    if not text:
+        return ""
+    if isinstance(text, bytes):
+        text = text.decode(errors="replace")
+    lines = str(text).splitlines()
+    tail = "\n".join(lines[-max_lines:])
+    return tail[-max_chars:]
+
+
+def _exception_parts(message: str | None) -> tuple[str, str]:
+    msg = str(message or "")
+    m = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)):\s*(.*)$", msg)
+    if m:
+        return m.group(1), m.group(2)
+    return "", msg
+
+
 def _print_split_result(row: dict) -> None:
     print('\n[SPLIT RESULT]', flush=True)
     print(f"symbol={row.get('symbol', 'NA')}", flush=True)
@@ -809,7 +828,16 @@ def _print_clean_split_result(row: dict) -> None:
 
 
 def _record_split_result(row: dict) -> None:
-    _VERIFICATION_TABLE.append(row)
+    _upsert_row_by_symbol_split(_VERIFICATION_TABLE, row)
+
+
+def _upsert_row_by_symbol_split(rows: list[dict], row: dict) -> None:
+    key = (str(row.get("symbol")), int(row.get("split", 0)))
+    for idx, existing in enumerate(rows):
+        if (str(existing.get("symbol")), int(existing.get("split", 0))) == key:
+            rows[idx] = {**existing, **row}
+            return
+    rows.append(row)
 
 
 def _safe_window_name(start, end) -> str:
@@ -830,7 +858,7 @@ def _expected_artifact_paths(symbol: str, split_idx: int, command: str, out_dir:
         test_start.isoformat() if test_start else None,
         test_end.isoformat() if test_end else None,
     )
-    profile = _ns_cfg.ACTIVE_PROFILE
+    profile = getattr(_ns_cfg, "ACTIVE_PROFILE", "profile")
     return {
         "backtest_results": str(out_dir / ("backtest_results_hmm.parquet" if command == "run-hmm" else "backtest_results.parquet")),
         "oos_predictions": str(out_dir / "oos_predictions.parquet"),
@@ -842,8 +870,25 @@ def _expected_artifact_paths(symbol: str, split_idx: int, command: str, out_dir:
     }
 
 
-def _record_split_artifacts(symbol: str, split_idx: int, command: str, out_dir: Path, train_start, train_end, test_start, test_end, status: str) -> None:
+def _record_split_artifacts(
+    symbol: str,
+    split_idx: int,
+    command: str,
+    out_dir: Path,
+    train_start,
+    train_end,
+    test_start,
+    test_end,
+    status: str,
+    error: str | None = None,
+    *,
+    rc: int | None = None,
+    command_line: str | None = None,
+    stdout_tail: str | None = None,
+    stderr_tail: str | None = None,
+) -> None:
     paths = _expected_artifact_paths(symbol, split_idx, command, out_dir, test_start, test_end)
+    exception_type, exception_message = _exception_parts(error)
     row = {
         "split": split_idx,
         "symbol": symbol,
@@ -853,6 +898,13 @@ def _record_split_artifacts(symbol: str, split_idx: int, command: str, out_dir: 
         "test_end": test_end.isoformat() if test_end else None,
         "cli_command": command,
         "status": status,
+        "error": error,
+        "rc": rc,
+        "command": command_line or command,
+        "stdout_tail": stdout_tail or "",
+        "stderr_tail": stderr_tail or "",
+        "exception_type": exception_type,
+        "exception_message": exception_message,
         **paths,
         "leakage_status": _read_report_status(Path(paths["leakage_report"])),
         "execution_trace_status": _read_report_status(Path(paths["execution_trace_report"])),
@@ -860,7 +912,198 @@ def _record_split_artifacts(symbol: str, split_idx: int, command: str, out_dir: 
         "stress_status": _read_report_status(Path(paths["stress_report"])),
         "acceptance_status": _read_report_status(Path(paths["acceptance_report"])),
     }
-    _RUN_SPLIT_ARTIFACTS.append(row)
+    _upsert_row_by_symbol_split(_RUN_SPLIT_ARTIFACTS, row)
+
+
+def _expected_runtime_rows(config: RootConfig, splits: list, files: list[Path]) -> list[dict]:
+    rows = []
+    command = "run-hmm" if bool(getattr(getattr(config, "hmm", None), "enabled", False)) else "run"
+    profile = getattr(_ns_cfg, "ACTIVE_PROFILE", "profile")
+    for split_idx, split_data in enumerate(splits, 1):
+        test_years = split_data[1]
+        train_start = split_data[2] if len(split_data) > 2 else None
+        train_end = split_data[3] if len(split_data) > 3 else None
+        test_start = split_data[4] if len(split_data) > 4 else None
+        test_end = split_data[5] if len(split_data) > 5 else None
+        test_files = [f for f in files if int(f.stem) in test_years]
+        for symbol in config.symbols:
+            symbol_files = sorted([f for f in test_files if f.parent.name == symbol])
+            if symbol_files:
+                test_file = symbol_files[0]
+                test_year_label = "_".join(str(f.stem) for f in symbol_files)
+                out_dir = Path("output") / symbol / f"{test_year_label}_split_{split_idx}_{profile}"
+            else:
+                test_file = None
+                out_dir = Path("output") / symbol / f"missing_test_file_split_{split_idx}_{profile}"
+            paths = _expected_artifact_paths(symbol, split_idx, command, out_dir, test_start, test_end)
+            rows.append(
+                {
+                    "split": split_idx,
+                    "symbol": symbol,
+                    "test_file": str(test_file) if test_file else "",
+                    "missing_test_file": test_file is None,
+                    "train_start": train_start.isoformat() if train_start else None,
+                    "train_end": train_end.isoformat() if train_end else None,
+                    "test_start": test_start.isoformat() if test_start else None,
+                    "test_end": test_end.isoformat() if test_end else None,
+                    "cli_command": command,
+                    "out_dir": str(out_dir),
+                    "test_file_count": len(symbol_files),
+                    "test_year_label": "_".join(str(f.stem) for f in symbol_files),
+                    **paths,
+                }
+            )
+    return rows
+
+
+def _assert_execution_plan_unique(plan_rows: list[dict], symbols: list[str], splits: list) -> None:
+    expected = len(symbols) * len(splits)
+    assert len(plan_rows) == expected, (
+        f"SPLIT PLAN ROW COUNT FAIL: rows={len(plan_rows)} expected={expected} "
+        f"symbols={symbols} splits={len(splits)}"
+    )
+    keys = [(r.get("symbol"), int(r.get("split", 0))) for r in plan_rows]
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
+    assert len(keys) == len(set(keys)), f"SPLIT PLAN DUPLICATE FAIL: duplicate (symbol, split) rows={dupes}"
+
+
+def _prediction_pnl_missing_reason(result_row: dict, artifact_row: dict, col: str, checksum_col: str) -> str:
+    value = result_row.get(checksum_col)
+    if value not in ("missing", "all_nan", None, ""):
+        return ""
+    bt_path = Path(artifact_row.get("backtest_results") or result_row.get("path", ""))
+    if not bt_path.exists():
+        return f"{checksum_col} missing: backtest_results missing at {bt_path}"
+    try:
+        df = pl.read_parquet(bt_path)
+    except Exception as exc:
+        return f"{checksum_col} missing: cannot read backtest_results at {bt_path}: {exc}"
+    if col not in df.columns:
+        return f"{checksum_col} missing: column {col} absent in {bt_path}"
+    return f"{checksum_col} missing: column {col} all non-finite/null in {bt_path}"
+
+
+def _artifact_failure_reasons(result_row: dict, artifact_row: dict) -> list[str]:
+    reasons = []
+    if result_row.get("error"):
+        reasons.append(str(result_row["error"]))
+    for key in [
+        "backtest_results",
+        "oos_predictions",
+        "leakage_report",
+        "execution_trace_report",
+        "metrics_report",
+        "stress_report",
+        "acceptance_report",
+    ]:
+        path = artifact_row.get(key)
+        if path and not Path(path).exists():
+            reasons.append(f"missing {key}: {path}")
+    for col, checksum_col in [("prediction_prob", "pred_cs"), ("pnl", "pnl_cs")]:
+        reason = _prediction_pnl_missing_reason(result_row, artifact_row, col, checksum_col)
+        if reason:
+            reasons.append(reason)
+    if artifact_row.get("error") and artifact_row.get("error") not in reasons:
+        reasons.append(str(artifact_row["error"]))
+    return reasons
+
+
+def _write_failure_reasons(rows: list[dict]) -> tuple[Path, Path]:
+    out_dir = Path("reports") / "validation"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = out_dir / "failure_reasons.csv"
+    json_path = out_dir / "failure_reasons.json"
+    fields = [
+        "symbol",
+        "split",
+        "status",
+        "rc",
+        "command",
+        "exception_type",
+        "exception_message",
+        "stdout_tail",
+        "stderr_tail",
+        "pred_cs",
+        "pnl_cs",
+        "failure_reason",
+        "backtest_results",
+        "oos_predictions",
+        "metrics_report",
+        "acceptance_report",
+    ]
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in fields})
+    json_path.write_text(json.dumps(rows, indent=2, default=str), encoding="utf-8")
+    return csv_path, json_path
+
+
+def _prepare_final_artifact_completeness(config: RootConfig, splits: list, files: list[Path]) -> dict:
+    expected = _expected_runtime_rows(config, splits, files)
+    expected_count = len(config.symbols) * len(splits)
+    expected_by_key = {(r["symbol"], r["split"]): r for r in expected}
+    result_by_key = {(r.get("symbol"), int(r.get("split", 0))): r for r in _VERIFICATION_TABLE}
+    artifact_by_key = {(r.get("symbol"), int(r.get("split", 0))): r for r in _RUN_SPLIT_ARTIFACTS}
+
+    for key, exp in expected_by_key.items():
+        if key not in result_by_key:
+            row = _failed_result_row(exp["split"], exp["symbol"], exp["backtest_results"], error="missing_result_row")
+            row.update({k: exp.get(k) for k in ["backtest_results", "oos_predictions", "metrics_report", "acceptance_report"]})
+            _record_split_result(row)
+        if key not in artifact_by_key:
+            _record_split_artifacts(
+                exp["symbol"],
+                exp["split"],
+                exp["cli_command"],
+                Path(exp["out_dir"]),
+                None,
+                None,
+                None,
+                None,
+                "FAILED",
+                error="missing_artifact_row",
+            )
+
+    failure_rows = []
+    result_by_key = {(r.get("symbol"), int(r.get("split", 0))): r for r in _VERIFICATION_TABLE}
+    artifact_by_key = {(r.get("symbol"), int(r.get("split", 0))): r for r in _RUN_SPLIT_ARTIFACTS}
+    for key in sorted(expected_by_key, key=lambda x: (str(x[0]), int(x[1]))):
+        result_row = result_by_key[key]
+        artifact_row = {**artifact_by_key.get(key, {}), **expected_by_key[key]}
+        reasons = _artifact_failure_reasons(result_row, artifact_row)
+        result_row["failure_reason"] = "; ".join(reasons)
+        result_row["backtest_results"] = artifact_row.get("backtest_results")
+        result_row["oos_predictions"] = artifact_row.get("oos_predictions")
+        result_row["metrics_report"] = artifact_row.get("metrics_report")
+        result_row["acceptance_report"] = artifact_row.get("acceptance_report")
+        for diag_key in ["rc", "command", "stdout_tail", "stderr_tail", "exception_type", "exception_message"]:
+            if not result_row.get(diag_key) and artifact_row.get(diag_key):
+                result_row[diag_key] = artifact_row.get(diag_key)
+        if reasons or result_row.get("status") != "OK":
+            failure_rows.append(
+                {
+                    **result_row,
+                    "failure_reason": result_row["failure_reason"] or result_row.get("status", "FAILED"),
+                }
+            )
+
+    assert len(_VERIFICATION_TABLE) == expected_count, (
+        f"FINAL SUMMARY ROW COUNT FAIL: rows={len(_VERIFICATION_TABLE)} expected={expected_count} "
+        f"symbols={list(config.symbols)} splits={len(splits)}"
+    )
+    keys = [(r.get("symbol"), int(r.get("split", 0))) for r in _VERIFICATION_TABLE]
+    assert len(keys) == len(set(keys)), "FINAL SUMMARY DUPLICATE ROW FAIL: duplicate (symbol, split) rows present"
+    csv_path, json_path = _write_failure_reasons(failure_rows)
+    return {
+        "status": "PASS" if not failure_rows else "FAIL",
+        "expected_rows": expected_count,
+        "actual_rows": len(_VERIFICATION_TABLE),
+        "failure_count": len(failure_rows),
+        "failure_reasons_csv": str(csv_path),
+        "failure_reasons_json": str(json_path),
+    }
 
 
 def _final_safety_summary(config: RootConfig, total_splits: int, deployment_report: dict) -> dict:
@@ -869,12 +1112,14 @@ def _final_safety_summary(config: RootConfig, total_splits: int, deployment_repo
         status = row.get("acceptance_status", "MISSING")
         counts[status if status in counts else "MISSING"] += 1
     successful = sum(1 for r in _RUN_SPLIT_ARTIFACTS if r.get("status") == "OK")
-    failed = max(total_splits - successful, 0)
+    expected_rows = len(config.symbols) * int(total_splits)
+    failed = max(expected_rows - successful, 0)
     summary = {
         "run_id": _RUN_ID,
         "profile": _ns_cfg.ACTIVE_PROFILE,
         "symbols": list(config.symbols),
         "splits": total_splits,
+        "expected_symbol_split_rows": expected_rows,
         "successful": successful,
         "failed": failed,
         "total_reports_written": sum(
@@ -891,7 +1136,11 @@ def _final_safety_summary(config: RootConfig, total_splits: int, deployment_repo
     print(f"run_id={summary['run_id']}", flush=True)
     print(f"profile={summary['profile']}", flush=True)
     print(f"symbols={','.join(summary['symbols'])}", flush=True)
-    print(f"splits={summary['splits']} successful={summary['successful']} failed={summary['failed']}", flush=True)
+    print(
+        f"splits={summary['splits']} expected_rows={summary['expected_symbol_split_rows']} "
+        f"successful={summary['successful']} failed={summary['failed']}",
+        flush=True,
+    )
     print(
         "acceptance: "
         f"ACCEPT={counts['ACCEPT']} REJECT={counts['REJECT']} WARN={counts['WARN']} MISSING={counts['MISSING']}",
@@ -913,7 +1162,12 @@ def _failed_result_row(
     *,
     mtime: float = 0.0,
     error: str | None = None,
+    rc: int | None = None,
+    command: str | None = None,
+    stdout_tail: str | None = None,
+    stderr_tail: str | None = None,
 ) -> dict:
+    exception_type, exception_message = _exception_parts(error)
     return {
         'split': split_idx, 'symbol': symbol, 'path': str(path),
         'mtime': mtime, 'run_id': _RUN_ID, 'rows': 0,
@@ -927,6 +1181,12 @@ def _failed_result_row(
         'trade_hit_rate': 'NA', 'trade_hit_rate_n': 0,
         'position_change_events': 0, 'position_turnover': 0.0,
         'error': error,
+        'rc': rc,
+        'command': command,
+        'stdout_tail': stdout_tail or '',
+        'stderr_tail': stderr_tail or '',
+        'exception_type': exception_type,
+        'exception_message': exception_message,
     }
 
 
@@ -1109,15 +1369,31 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
             except Exception:
                 pass
         shutil.copy2(f, dst)
+    test_dir = Path('output') / f"test_{'_'.join(map(str, test_years))}_split_{split_idx}"
+    test_dir.mkdir(parents=True, exist_ok=True)
+    for f in test_files:
+        dst = test_dir / f.parent.name / f.name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.exists():
+            continue
+        if os.name != 'nt':
+            try:
+                os.symlink(f.resolve(), dst)
+                continue
+            except Exception:
+                pass
+        shutil.copy2(f, dst)
     env = os.environ.copy()
     env['TQDM_DISABLE'] = '1'
     env['PYTHONIOENCODING'] = 'utf-8'
     per_symbol = {}
-    for f in test_files:
-        symbol = f.parent.name
+    for symbol in config.symbols:
+        symbol_test_files = sorted([p for p in test_files if p.parent.name == symbol])
+        test_year_label = "_".join(str(p.stem) for p in symbol_test_files) or "missing"
+        test_data_arg = str(test_dir / symbol / '*.parquet')
         test_label = (
             f'{test_start.isoformat()}→{test_end.isoformat()}'
-            if test_start and test_end else f.stem
+            if test_start and test_end else test_year_label
         )
         _PROGRESS.set_context(
             symbol=symbol,
@@ -1126,13 +1402,15 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
             contract_summary=_contract_summary(symbol),
         )
         print(f'\n[SPLIT {split_idx}/{total_splits}] {symbol} test={test_label}', flush=True)
-        _stage(1, f'{f} found')
-        if not _validate_symbol_data(f, config):
+        _stage(1, f'{test_data_arg} found files={len(symbol_test_files)}')
+        invalid_file = next((p for p in symbol_test_files if not _validate_symbol_data(p, config)), None)
+        if not symbol_test_files or invalid_file is not None:
+            err = 'missing_test_file' if not symbol_test_files else f'invalid_or_empty_raw_data: {invalid_file}'
             _stage(13, 'FAILED invalid_or_empty_raw_data')
             _record_split_result(_failed_result_row(
-                split_idx, symbol, f,
-                mtime=f.stat().st_mtime if f.exists() else 0.0,
-                error='invalid_or_empty_raw_data',
+                split_idx, symbol, test_data_arg,
+                mtime=invalid_file.stat().st_mtime if invalid_file and invalid_file.exists() else 0.0,
+                error=err,
             ))
             continue
         train_glob = str(train_dir / f'{symbol}_*.parquet')
@@ -1158,7 +1436,7 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
                 json.dump({'version': '1.0', 'feature_names': [], 'selection_seed': config.preprocessing.seed,
                            'selection_date': 'placeholder', 'discovery_status': 'disabled'}, f)
             os.replace(tmp, str(manifest_path))
-        out_dir = Path('output') / symbol / f'{f.stem}_split_{split_idx}_{_ns_cfg.ACTIVE_PROFILE}'
+        out_dir = Path('output') / symbol / f'{test_year_label}_split_{split_idx}_{_ns_cfg.ACTIVE_PROFILE}'
         out_dir.mkdir(parents=True, exist_ok=True)
         # Purge stale backtest files from previous runs
         for _stale_name in ('backtest_results_hmm.parquet', 'backtest_results.parquet'):
@@ -1172,7 +1450,7 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
         hmm_enabled = bool(getattr(getattr(config, 'hmm', None), 'enabled', False))
         cli_action = 'run-hmm' if hmm_enabled else 'run'
         _raw_log(f'[RUN-MODE] symbol={symbol} split={split_idx} hmm_enabled={str(hmm_enabled).lower()} cli={cli_action}')
-        cmd = [sys.executable, '-m', 'pipeline.cli', cli_action, '--data', str(f),
+        cmd = [sys.executable, '-m', 'pipeline.cli', cli_action, '--data', test_data_arg,
                '--manifest', str(manifest_path), '--out', str(out_dir)]
         if train_start and train_end:
             cmd.extend(['--train-start', train_start.isoformat(), '--train-end', train_end.isoformat()])
@@ -1209,10 +1487,19 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
                                             Path('output') / 'logs', symbol, split_idx, 'run')
                 logger.error('run failed for %s split=%d (rc=%d)',
                              symbol, split_idx, getattr(e, 'returncode', -1))
+                rc = getattr(e, 'returncode', -1)
+                cmd_text = ' '.join(map(str, cmd))
+                stdout_tail = _tail_text(stdout_text)
+                stderr_tail = _tail_text(stderr_text)
                 _record_split_result(_failed_result_row(
-                    split_idx, symbol, out_dir, error=run_error
+                    split_idx, symbol, out_dir, error=run_error,
+                    rc=rc, command=cmd_text, stdout_tail=stdout_tail, stderr_tail=stderr_tail,
                 ))
-                _record_split_artifacts(symbol, split_idx, cli_action, out_dir, train_start, train_end, test_start, test_end, 'FAILED')
+                _record_split_artifacts(
+                    symbol, split_idx, cli_action, out_dir, train_start, train_end, test_start, test_end,
+                    'FAILED', error=run_error, rc=rc, command_line=cmd_text,
+                    stdout_tail=stdout_tail, stderr_tail=stderr_tail,
+                )
                 if os.environ.get('QUANT_ACCEPTANCE_GATE_REQUIRED') == '1':
                     raise RuntimeError(f'ACCEPTANCE REQUIRED FAIL: {run_error}') from e
                 subprocess_failed = True
@@ -1271,10 +1558,19 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
                     _log_subprocess_failure(cmd_fb, getattr(e2, 'returncode', -1), stderr2, stdout2,
                                             Path('output') / 'logs', symbol, split_idx, 'fallback')
                 logger.error('Fallback run also failed for %s split=%d', symbol, split_idx)
+                rc2 = getattr(e2, 'returncode', -1)
+                cmd_fb_text = ' '.join(map(str, cmd_fb))
+                stdout2_tail = _tail_text(stdout2)
+                stderr2_tail = _tail_text(stderr2)
                 _record_split_result(_failed_result_row(
-                    split_idx, symbol, out_dir, error=fallback_error
+                    split_idx, symbol, out_dir, error=fallback_error,
+                    rc=rc2, command=cmd_fb_text, stdout_tail=stdout2_tail, stderr_tail=stderr2_tail,
                 ))
-                _record_split_artifacts(symbol, split_idx, 'run', out_dir, train_start, train_end, test_start, test_end, 'FAILED')
+                _record_split_artifacts(
+                    symbol, split_idx, 'run', out_dir, train_start, train_end, test_start, test_end,
+                    'FAILED', error=fallback_error, rc=rc2, command_line=cmd_fb_text,
+                    stdout_tail=stdout2_tail, stderr_tail=stderr2_tail,
+                )
                 if os.environ.get('QUANT_ACCEPTANCE_GATE_REQUIRED') == '1':
                     raise RuntimeError(f'ACCEPTANCE REQUIRED FAIL: {fallback_error}') from e2
                 subprocess_failed = True
@@ -1390,13 +1686,13 @@ def process_split(train_years: list[int], test_years: list[int], files: list[Pat
                 _record_split_result(_failed_result_row(
                     split_idx, symbol, bt_path, mtime=_bt_mtime, error=result_error
                 ))
-                _record_split_artifacts(symbol, split_idx, cli_action, out_dir, train_start, train_end, test_start, test_end, 'FAILED')
+                _record_split_artifacts(symbol, split_idx, cli_action, out_dir, train_start, train_end, test_start, test_end, 'FAILED', error=result_error)
         else:
             _stage(13, _tracking_summary(failed=f'missing_output={out_dir} status=FAILED'))
             _record_split_result(_failed_result_row(
                 split_idx, symbol, out_dir, error='missing_output'
             ))
-            _record_split_artifacts(symbol, split_idx, cli_action, out_dir, train_start, train_end, test_start, test_end, 'FAILED')
+            _record_split_artifacts(symbol, split_idx, cli_action, out_dir, train_start, train_end, test_start, test_end, 'FAILED', error='missing_output')
     # ---- Master dashboard ----
     _print_split_dashboard(split_idx, total_splits, per_symbol)
 if __name__ == '__main__':
@@ -1512,6 +1808,8 @@ if __name__ == '__main__':
         checkpoint_start={"start_stage": start_stage, "checkpoint_root": data_dir, "checkpoint_gate": checkpoint_report, "stage_plan": stage_plan},
     )
     splits = generate_walkforward_splits(files, config)
+    execution_plan_rows = _expected_runtime_rows(config, splits, files)
+    _assert_execution_plan_unique(execution_plan_rows, list(config.symbols), splits)
     write_wfa_split_plan(splits, files, config)
     total = len(splits)
     print(
@@ -1535,7 +1833,25 @@ if __name__ == '__main__':
             test_end    = split_data[5] if len(split_data) > 5 else None
             process_split(train, test, files, config, i, total, train_start, train_end, test_start, test_end)
     finally:
+        artifact_completeness = _prepare_final_artifact_completeness(config, splits, files)
         _print_final_summary_table()
+        if artifact_completeness["status"] != "PASS":
+            expected_rows = len(config.symbols) * len(splits)
+            print(
+                f"[FINAL SAFETY SUMMARY]\nrun_id={_RUN_ID}\nprofile={_ns_cfg.ACTIVE_PROFILE}\n"
+                f"symbols={','.join(config.symbols)}\nsplits={len(splits)} expected_rows={expected_rows} "
+                f"successful={sum(1 for r in _RUN_SPLIT_ARTIFACTS if r.get('status') == 'OK')} "
+                f"failed={artifact_completeness['failure_count']}",
+                flush=True,
+            )
+            print(
+                f"ARTIFACT COMPLETENESS FAIL: failures={artifact_completeness['failure_count']} "
+                f"details={artifact_completeness['failure_reasons_csv']}",
+                flush=True,
+            )
+            raise RuntimeError(
+                f"ARTIFACT COMPLETENESS FAIL: see {artifact_completeness['failure_reasons_csv']}"
+            )
         deployment_report = run_deployment_readiness_gate(config)
         final_summary = _final_safety_summary(config, total, deployment_report)
         write_run_manifest(

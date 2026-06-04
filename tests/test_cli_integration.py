@@ -13,6 +13,8 @@ REPO = Path(__file__).resolve().parents[1]
 def _run(args, cwd=None, extra_env=None):
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO)
+    env.setdefault("CONFIG_ENV", "tier_0_smoke_pipeline")
+    env.setdefault("QUANT_MODELING_MODE", "minimal_compatible")
     if extra_env:
         env.update(extra_env)
     return subprocess.run(

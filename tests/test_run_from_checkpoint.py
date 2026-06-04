@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -15,15 +16,16 @@ from pipeline.orchestration.downstream import run_from_causally_gated_checkpoint
 REPO = Path(__file__).resolve().parents[1]
 
 
-def _causal_df(n=200):
-    ts = pl.datetime_range(pl.datetime(2025, 1, 1, 9, 30), pl.datetime(2025, 7, 19, 9, 30), "1d", eager=True)
-    exec_ts = pl.datetime_range(pl.datetime(2025, 1, 1, 9, 31), pl.datetime(2025, 7, 19, 9, 31), "1d", eager=True)
+def _causal_df(n=1200):
+    start = datetime(2025, 1, 1, 9, 30)
+    ts = pl.Series([start + timedelta(minutes=i) for i in range(n)])
+    exec_ts = pl.Series([start + timedelta(minutes=i + 1) for i in range(n)])
     return pl.DataFrame({
         "ts_event": ts,
-        "open": [100.0 + i * 0.1 for i in range(n)],
-        "high": [100.2 + i * 0.1 for i in range(n)],
-        "low": [99.8 + i * 0.1 for i in range(n)],
-        "close": [100.05 + i * 0.1 for i in range(n)],
+        "open": [5000.0 + i * 0.1 for i in range(n)],
+        "high": [5000.2 + i * 0.1 for i in range(n)],
+        "low": [4999.8 + i * 0.1 for i in range(n)],
+        "close": [5000.05 + i * 0.1 for i in range(n)],
         "volume": [100 + i for i in range(n)],
         "session_id": ["s"] * n,
         "session_date": [str(d.date()) for d in ts],
@@ -68,6 +70,7 @@ def test_run_py_from_causally_gated_checkpoint_does_not_require_validated(tmp_pa
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO)
     env["CONFIG_ENV"] = "tier_0_smoke_pipeline"
+    env["QUANT_MODELING_MODE"] = "minimal_compatible"
     env["QUANT_START_STAGE"] = "causally_gated_normalized"
     env["QUANT_DATA_ROOT"] = str(root)
     result = subprocess.run([sys.executable, str(REPO / "run.py"), "--from-stage", "causally_gated_normalized", "--data-root", str(root)], cwd=tmp_path, env=env, text=True, capture_output=True, timeout=60)

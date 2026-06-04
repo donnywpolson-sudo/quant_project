@@ -13,7 +13,7 @@
 #   tier_4_professional_full_grade     -> full all-market professional-grade test
 #   tier_5_full_history_stress_no_sr3  -> optional long-history stress test excluding SR3
 
-active_profile: tier_0_smoke_pipeline
+active_profile: tier_1_bare_minimum_alpha
 
 base:
   time_zone: "America/New_York"
@@ -259,6 +259,8 @@ profiles:
     folds: 3
     start_year: 2023
     end_year: 2025
+    pipeline:
+      modeling_mode: "full_research"
     walkforward:
       wf_train_days: 180
       wf_test_days: 30

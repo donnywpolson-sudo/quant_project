@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -11,14 +12,15 @@ from pipeline.data_gate.manifest import build_data_manifest
 REPO = Path(__file__).resolve().parents[1]
 
 
-def _base(n=200):
-    ts = pl.datetime_range(pl.datetime(2025, 1, 1, 9, 30), pl.datetime(2025, 7, 19, 9, 30), "1d", eager=True)
+def _base(n=1200):
+    start = datetime(2025, 1, 1, 9, 30)
+    ts = pl.Series([start + timedelta(minutes=i) for i in range(n)])
     return pl.DataFrame({
         "ts_event": ts,
-        "open": [100.0 + i * 0.1 for i in range(n)],
-        "high": [100.2 + i * 0.1 for i in range(n)],
-        "low": [99.8 + i * 0.1 for i in range(n)],
-        "close": [100.05 + i * 0.1 for i in range(n)],
+        "open": [5000.0 + i * 0.1 for i in range(n)],
+        "high": [5000.2 + i * 0.1 for i in range(n)],
+        "low": [4999.8 + i * 0.1 for i in range(n)],
+        "close": [5000.05 + i * 0.1 for i in range(n)],
         "volume": [100 + i for i in range(n)],
         "x": [float(i % 7) for i in range(n)],
     })
@@ -28,6 +30,7 @@ def _run_auto(tmp_path, root):
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO)
     env["CONFIG_ENV"] = "tier_0_smoke_pipeline"
+    env["QUANT_MODELING_MODE"] = "minimal_compatible"
     return subprocess.run([sys.executable, str(REPO / "run.py"), "--from-stage", "auto", "--data-root", str(root)], cwd=tmp_path, env=env, text=True, capture_output=True, timeout=80)
 
 
