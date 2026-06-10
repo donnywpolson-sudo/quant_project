@@ -13,7 +13,7 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Protocol, TypedDict, cast
 
 import pandas as pd
 
@@ -138,6 +138,36 @@ class DownloadTask:
     output_path: str
 
 
+class DatasetConditionInfo(TypedDict):
+    raw: list[dict[str, object]]
+    conditions: dict[str, str]
+    degraded_dates: list[str]
+
+
+class DatabentoMetadataClient(Protocol):
+    def get_billable_size(self, **kwargs: object) -> object: ...
+
+    def get_cost(self, **kwargs: object) -> float: ...
+
+    def get_dataset_condition(self, **kwargs: object) -> list[dict[str, object]]: ...
+
+
+class DatabentoTimeseriesClient(Protocol):
+    def get_range(self, **kwargs: object) -> object: ...
+
+
+class DatabentoMetadataHolder(Protocol):
+    metadata: DatabentoMetadataClient
+
+
+class DatabentoClient(DatabentoMetadataHolder, Protocol):
+    timeseries: DatabentoTimeseriesClient
+
+
+class DatabentoStore(Protocol):
+    def to_df(self, **kwargs: object) -> object: ...
+
+
 def parse_symbols(value: str | None, universe: str) -> list[str]:
     if value:
         return sorted({item.strip().upper() for item in value.split(",") if item.strip()})
@@ -190,18 +220,73 @@ def iter_year_tasks(
     return tasks
 
 
-def get_client():
-    key = os.environ.get("DATABENTO_API_KEY")
+def normalize_api_key(value: str | None) -> str:
+    if not value:
+        return ""
+    key = value.strip()
+    if len(key) >= 2 and key[0] == key[-1] and key[0] in {"'", '"'}:
+        key = key[1:-1].strip()
+    return key
+
+
+def get_client() -> DatabentoClient:
+    key = normalize_api_key(os.environ.get("DATABENTO_API_KEY"))
     if not key:
         raise SystemExit("Set DATABENTO_API_KEY in the environment. Do not store it in files.")
     import databento as db
 
-    return db.Historical(key)
+    return cast(DatabentoClient, db.Historical(key))
+
+
+def offline_mode_message(*, key_set: bool) -> str:
+    key_status = "set" if key_set else "not set"
+    return (
+        "Nothing downloaded. A plain run only writes the download plan. "
+        f"DATABENTO_API_KEY is {key_status}. Rerun with --execute to download raw data. "
+        "Use --estimate-cost first if you want to review Databento cost before downloading."
+    )
 
 
 def is_fatal_error(exc: Exception) -> bool:
     text = str(exc).lower()
     return any(marker in text for marker in FATAL_ERROR_MARKERS)
+
+
+def first_pending_download(tasks: list[DownloadTask], *, overwrite: bool) -> DownloadTask | None:
+    if overwrite:
+        return tasks[0] if tasks else None
+    for task in tasks:
+        if not Path(task.output_path).exists():
+            return task
+    return None
+
+
+def preflight_auth(
+    client: DatabentoMetadataHolder,
+    tasks: list[DownloadTask],
+    *,
+    overwrite: bool,
+) -> None:
+    task = first_pending_download(tasks, overwrite=overwrite)
+    if task is None:
+        return
+    try:
+        client.metadata.get_billable_size(
+            dataset=task.dataset,
+            symbols=task.symbol,
+            schema=SCHEMA,
+            stype_in=STYPE_IN,
+            start=task.start,
+            end=task.end,
+        )
+    except Exception as exc:
+        if not is_fatal_error(exc):
+            raise
+        raise SystemExit(
+            "Databento rejected DATABENTO_API_KEY before download. "
+            "The prior OK_EXISTING lines, if any, were local file checks only. "
+            "Set a valid key in this PowerShell session and rerun with --execute."
+        ) from exc
 
 
 def condition_is_degraded(status: object) -> bool:
@@ -236,7 +321,10 @@ def normalize_dataset_conditions(rows: list[dict[str, object]]) -> dict[str, str
     return conditions
 
 
-def fetch_dataset_conditions(client, task: DownloadTask) -> dict[str, object]:
+def fetch_dataset_conditions(
+    client: DatabentoMetadataHolder,
+    task: DownloadTask,
+) -> DatasetConditionInfo:
     start = date.fromisoformat(task.start)
     end_inclusive = date.fromisoformat(task.end) - timedelta(days=1)
     if start > end_inclusive:
@@ -255,7 +343,7 @@ def fetch_dataset_conditions(client, task: DownloadTask) -> dict[str, object]:
 
 
 def store_to_required_dataframe(
-    store,
+    store: DatabentoStore,
     condition_by_date: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     df = store.to_df(price_type="float", pretty_ts=True, map_symbols=True)
@@ -285,7 +373,7 @@ def store_to_required_dataframe(
 
 
 def write_store_parquet(
-    store,
+    store: DatabentoStore,
     path: Path,
     condition_by_date: dict[str, str] | None = None,
 ) -> None:
@@ -380,7 +468,10 @@ def validate_download(path: Path) -> dict[str, object]:
     }
 
 
-def estimate_cost(client, tasks: list[DownloadTask]) -> list[dict[str, object]]:
+def estimate_cost(
+    client: DatabentoMetadataHolder,
+    tasks: list[DownloadTask],
+) -> list[dict[str, object]]:
     estimates: list[dict[str, object]] = []
     for task in tasks:
         try:
@@ -419,9 +510,14 @@ def estimate_cost(client, tasks: list[DownloadTask]) -> list[dict[str, object]]:
     return estimates
 
 
-def execute_download(client, tasks: list[DownloadTask], *, overwrite: bool) -> list[dict[str, object]]:
+def execute_download(
+    client: DatabentoClient,
+    tasks: list[DownloadTask],
+    *,
+    overwrite: bool,
+) -> list[dict[str, object]]:
     results: list[dict[str, object]] = []
-    condition_cache: dict[tuple[str, str, str], dict[str, object]] = {}
+    condition_cache: dict[tuple[str, str, str], DatasetConditionInfo] = {}
     for task in tasks:
         out = Path(task.output_path)
         if out.exists() and not overwrite:
@@ -450,7 +546,7 @@ def execute_download(client, tasks: list[DownloadTask], *, overwrite: bool) -> l
                 start=task.start,
                 end=task.end,
             )
-            write_store_parquet(data, out, condition_info["conditions"])
+            write_store_parquet(cast(DatabentoStore, data), out, condition_info["conditions"])
             check = validate_download(out)
             status = "ok" if check["valid"] else "bad_schema"
             results.append(
@@ -528,7 +624,7 @@ def main() -> int:
     print(f"PLAN products={len(products)} tasks={len(tasks)} out={args.out}")
 
     if not args.estimate_cost and not args.execute:
-        print("No network/spend mode. Add --estimate-cost first, then --execute only after reviewing cost.")
+        print(offline_mode_message(key_set=bool(os.environ.get("DATABENTO_API_KEY"))))
         return 0
 
     client = get_client()
@@ -541,6 +637,7 @@ def main() -> int:
         print(f"TOTAL_ESTIMATE_ERRORS {errors}")
 
     if args.execute:
+        preflight_auth(client, tasks, overwrite=args.overwrite)
         results = execute_download(client, tasks, overwrite=args.overwrite)
         write_json(Path(args.plan_out).with_name("databento_download_results.json"), results)
         failed = [item for item in results if item.get("status") not in {"ok", "ok_existing"}]

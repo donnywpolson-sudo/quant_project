@@ -19,9 +19,13 @@ from scripts.download_databento_raw import (
     dataset_for_product,
     execute_download,
     estimate_cost,
+    first_pending_download,
     is_fatal_error,
     iter_year_tasks,
+    normalize_api_key,
+    offline_mode_message,
     parse_symbols,
+    preflight_auth,
     store_to_required_dataframe,
     validate_download,
     write_store_parquet,
@@ -32,18 +36,24 @@ class FakeStore:
     def __init__(self, df: pd.DataFrame) -> None:
         self.df = df
 
-    def to_df(self, **kwargs) -> pd.DataFrame:
+    def to_df(self, **kwargs: object) -> pd.DataFrame:
         return self.df
 
 
 class FailingTimeseries:
-    def get_range(self, **kwargs):
+    def get_range(self, **kwargs: object) -> object:
         raise RuntimeError("401 auth_authentication_failed Authentication failed.")
 
 
 class FailingMetadata:
-    def get_dataset_condition(self, **kwargs):
+    def get_dataset_condition(self, **kwargs: object) -> list[dict[str, object]]:
         return []
+
+    def get_billable_size(self, **kwargs: object) -> object:
+        return 0
+
+    def get_cost(self, **kwargs: object) -> float:
+        return 0.0
 
 
 class FailingClient:
@@ -52,15 +62,33 @@ class FailingClient:
 
 
 class AuthFailingEstimateMetadata:
-    def get_cost(self, **kwargs):
+    def get_cost(self, **kwargs: object) -> float:
         raise RuntimeError("401 auth_authentication_failed Authentication failed.")
 
-    def get_billable_size(self, **kwargs):
+    def get_billable_size(self, **kwargs: object) -> object:
         raise AssertionError("get_billable_size should not be called after auth failure")
+
+    def get_dataset_condition(self, **kwargs: object) -> list[dict[str, object]]:
+        return []
 
 
 class AuthFailingEstimateClient:
     metadata = AuthFailingEstimateMetadata()
+
+
+class AuthFailingPreflightMetadata:
+    def get_billable_size(self, **kwargs: object) -> object:
+        raise RuntimeError("401 auth_authentication_failed Authentication failed.")
+
+    def get_cost(self, **kwargs: object) -> float:
+        return 0.0
+
+    def get_dataset_condition(self, **kwargs: object) -> list[dict[str, object]]:
+        return []
+
+
+class AuthFailingPreflightClient:
+    metadata = AuthFailingPreflightMetadata()
 
 
 def test_parse_symbols_current_and_extended() -> None:
@@ -85,6 +113,20 @@ def test_default_output_is_pipeline_raw_root() -> None:
 def test_continuous_requests_use_supported_output_symbology() -> None:
     assert STYPE_IN == "continuous"
     assert STYPE_OUT == "instrument_id"
+
+
+def test_normalize_api_key_strips_wrapping_noise() -> None:
+    assert normalize_api_key(None) == ""
+    assert normalize_api_key("  db-test  ") == "db-test"
+    assert normalize_api_key('"db-test"') == "db-test"
+    assert normalize_api_key("'db-test'") == "db-test"
+
+
+def test_offline_mode_message_says_nothing_downloaded() -> None:
+    assert "Nothing downloaded" in offline_mode_message(key_set=True)
+    assert "--execute" in offline_mode_message(key_set=True)
+    assert "DATABENTO_API_KEY is set" in offline_mode_message(key_set=True)
+    assert "DATABENTO_API_KEY is not set" in offline_mode_message(key_set=False)
 
 
 def test_condition_is_degraded_classifies_quality_status() -> None:
@@ -152,6 +194,51 @@ def test_iter_year_tasks_clips_glbx_to_available_start(tmp_path: Path) -> None:
     assert len(tasks) == 1
     assert tasks[0].start == "2010-06-06"
     assert tasks[0].end == "2011-01-01"
+
+
+def test_first_pending_download_skips_existing_files(tmp_path: Path) -> None:
+    existing = tmp_path / "raw" / "ES" / "2024.parquet"
+    missing = tmp_path / "raw" / "ES" / "2025.parquet"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("placeholder", encoding="utf-8")
+    tasks = [
+        DownloadTask(
+            CME_DATASET,
+            "ES",
+            2024,
+            "2024-01-01",
+            "2025-01-01",
+            "ES.v.0",
+            existing.as_posix(),
+        ),
+        DownloadTask(
+            CME_DATASET,
+            "ES",
+            2025,
+            "2025-01-01",
+            "2026-01-01",
+            "ES.v.0",
+            missing.as_posix(),
+        ),
+    ]
+
+    assert first_pending_download(tasks, overwrite=False) == tasks[1]
+    assert first_pending_download(tasks, overwrite=True) == tasks[0]
+
+
+def test_preflight_auth_fails_fast_on_auth_error(tmp_path: Path) -> None:
+    task = DownloadTask(
+        CME_DATASET,
+        "ES",
+        2024,
+        "2024-01-01",
+        "2025-01-01",
+        "ES.v.0",
+        (tmp_path / "raw" / "ES" / "2024.parquet").as_posix(),
+    )
+
+    with pytest.raises(SystemExit, match="Databento rejected DATABENTO_API_KEY"):
+        preflight_auth(AuthFailingPreflightClient(), [task], overwrite=False)
 
 
 def test_store_to_required_dataframe_resets_datetime_index_to_ts_event() -> None:
@@ -376,7 +463,7 @@ def test_execute_download_validates_existing_files_as_ok(tmp_path: Path) -> None
     ).to_parquet(path, index=False)
 
     results = execute_download(
-        client=object(),
+        client=FailingClient(),
         tasks=[
             DownloadTask(
                 dataset=CME_DATASET,
