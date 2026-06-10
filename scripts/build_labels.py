@@ -159,6 +159,8 @@ class LabelResult:
     target_invalid_rows: int = 0
     invalid_reason_counts: dict[str, int] = field(default_factory=dict)
     roll_detection_available: bool = False
+    roll_detection_available_rows: int = 0
+    roll_detection_unavailable_rows: int = 0
     roll_protection_unavailable: bool = False
     config: dict[str, object] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -550,8 +552,8 @@ def add_labels(df: pd.DataFrame, config: MarketConfig) -> pd.DataFrame:
 
     gross_ticks = (exit_price - entry_price) / tick_size
     gross_dollars = gross_ticks * tick_value
-    abs_net_ticks = gross_ticks.abs() - config.estimated_cost_ticks
-    net_ticks = np.sign(gross_ticks) * abs_net_ticks
+    net_magnitude = (gross_ticks.abs() - config.estimated_cost_ticks).clip(lower=0.0)
+    net_ticks = np.sign(gross_ticks) * net_magnitude
     net_dollars = net_ticks * tick_value
     sign = np.sign(gross_ticks).fillna(0).astype("int64")
     deadzone_ticks = config.estimated_cost_ticks + config.min_profit_ticks
@@ -691,12 +693,16 @@ def process_file(
         result.failures.append("missing required input columns: " + ",".join(missing))
         return result
 
-    result.roll_detection_available = bool(
-        _as_bool(df, "roll_detection_available", default=False).any()
-    )
-    if not result.roll_detection_available:
+    roll_detection_available = _as_bool(df, "roll_detection_available", default=False)
+    result.roll_detection_available_rows = int(roll_detection_available.sum())
+    result.roll_detection_unavailable_rows = int((~roll_detection_available).sum())
+    result.roll_detection_available = result.roll_detection_unavailable_rows == 0
+    if result.roll_detection_unavailable_rows:
         result.roll_protection_unavailable = True
-        result.warnings.append("roll protection unavailable: roll_detection_available false")
+        result.warnings.append(
+            "roll protection unavailable for "
+            f"{result.roll_detection_unavailable_rows} rows: roll_detection_available false"
+        )
 
     output = add_labels(df, config)
     result.output_rows = len(output)
@@ -744,12 +750,24 @@ def write_reports(results: Iterable[LabelResult], reports_root: Path, profile: s
         "roll_protection_unavailable_files": int(
             sum(bool(row["roll_protection_unavailable"]) for row in rows)
         ),
+        "roll_detection_available_rows": int(
+            sum(row["roll_detection_available_rows"] for row in rows)
+        ),
+        "roll_detection_unavailable_rows": int(
+            sum(row["roll_detection_unavailable_rows"] for row in rows)
+        ),
+    }
+    label_semantics = {
+        "target_ret_ticks_15m": "signed directional price move; positive means price moved up, negative means price moved down",
+        "target_net_ticks_after_est_cost": "signed directional move beyond estimated cost; costs reduce magnitude and never flip sign",
+        "target_tradeable_after_cost": "absolute move exceeds estimated cost; not guaranteed profitability",
     }
 
     report = {
         "profile": profile,
         "stage": "labels",
         "status": status,
+        "label_semantics": label_semantics,
         "files": rows,
         "summary": summary,
     }
@@ -757,6 +775,7 @@ def write_reports(results: Iterable[LabelResult], reports_root: Path, profile: s
         "profile": profile,
         "stage": "labels",
         "status": status,
+        "label_semantics": label_semantics,
         "outputs": [
             {
                 "market": row["market"],
@@ -769,6 +788,8 @@ def write_reports(results: Iterable[LabelResult], reports_root: Path, profile: s
                 "target_invalid_rows": row["target_invalid_rows"],
                 "invalid_reason_counts": row["invalid_reason_counts"],
                 "roll_detection_available": row["roll_detection_available"],
+                "roll_detection_available_rows": row["roll_detection_available_rows"],
+                "roll_detection_unavailable_rows": row["roll_detection_unavailable_rows"],
                 "roll_protection_unavailable": row["roll_protection_unavailable"],
                 "config": row["config"],
                 "warnings": row["warnings"],

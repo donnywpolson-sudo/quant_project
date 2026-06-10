@@ -53,6 +53,22 @@ def _write_causal(path: Path, rows: list[dict[str, object]]) -> None:
     pd.DataFrame(rows).to_parquet(path, index=False)
 
 
+def _rows_with_gross_ticks(gross_ticks: float) -> list[dict[str, object]]:
+    rows = _base_rows()
+    entry_price = 100.0
+    exit_price = entry_price + (gross_ticks * 0.25)
+    for row in rows:
+        row["open"] = entry_price
+        row["high"] = entry_price + 0.25
+        row["low"] = entry_price - 0.25
+        row["close"] = entry_price
+    rows[1]["open"] = entry_price
+    rows[16]["open"] = exit_price
+    rows[16]["high"] = max(exit_price, entry_price) + 0.25
+    rows[16]["low"] = min(exit_price, entry_price) - 0.25
+    return rows
+
+
 def test_entry_exit_alignment_uses_next_bar_open_not_close_t(tmp_path: Path) -> None:
     rows = _base_rows()
     rows[0]["close"] = 999.0
@@ -148,6 +164,34 @@ def test_tick_dollar_cost_and_deadzone_conversion() -> None:
     assert row["target_tradeable_after_cost"] == True
 
 
+def test_net_ticks_after_cost_semantics() -> None:
+    cases = [
+        (4.0, 2.0, True),
+        (1.0, 0.0, False),
+        (-4.0, -2.0, True),
+        (-1.0, -0.0, False),
+        (0.0, 0.0, False),
+        (2.0, 0.0, False),
+        (-2.0, -0.0, False),
+    ]
+
+    for gross_ticks, expected_net_ticks, expected_tradeable in cases:
+        labeled = add_labels(
+            pd.DataFrame(_rows_with_gross_ticks(gross_ticks)),
+            load_market_config("ES", Path("missing.yaml")),
+        )
+        row = labeled.iloc[0]
+        gross = row["target_ret_ticks_15m"]
+        net = row["target_net_ticks_after_est_cost"]
+
+        assert gross == gross_ticks
+        assert net == expected_net_ticks
+        assert row["target_net_dollars_after_est_cost"] == expected_net_ticks * 12.5
+        assert row["target_tradeable_after_cost"] == expected_tradeable
+        assert abs(net) <= abs(gross)
+        assert net == 0 or gross * net > 0
+
+
 def test_adaptive_atr_threshold_uses_past_only_data() -> None:
     rows = _base_rows()
     for row in rows:
@@ -222,3 +266,39 @@ def test_output_schema_and_reports(tmp_path: Path) -> None:
     assert manifest["outputs"][0]["warning_count"] == len(result.warnings)
     assert manifest["outputs"][0]["failure_count"] == len(result.failures)
     assert manifest["outputs"][0]["failures"] == result.failures
+    assert (
+        manifest["label_semantics"]["target_tradeable_after_cost"]
+        == "absolute move exceeds estimated cost; not guaranteed profitability"
+    )
+
+
+def test_mixed_roll_detection_availability_is_reported(tmp_path: Path) -> None:
+    input_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
+    output_path = tmp_path / "data" / "labeled" / "ES" / "2024.parquet"
+    reports_root = tmp_path / "reports" / "labels"
+    rows = _base_rows()
+    rows[3]["roll_detection_available"] = False
+    rows[4]["roll_detection_available"] = False
+    _write_causal(input_path, rows)
+
+    result = process_file(
+        input_path,
+        output_path,
+        profile="tier_1_CL_ES_ZN",
+        costs_config=tmp_path / "configs" / "costs.yaml",
+    )
+    write_reports([result], reports_root, "tier_1_CL_ES_ZN")
+
+    manifest = json.loads((reports_root / "label_manifest.json").read_text())
+    report = json.loads((reports_root / "label_report.json").read_text())
+    output_row = manifest["outputs"][0]
+
+    assert result.roll_detection_available == False
+    assert result.roll_detection_available_rows == len(rows) - 2
+    assert result.roll_detection_unavailable_rows == 2
+    assert result.roll_protection_unavailable == True
+    assert "roll protection unavailable for 2 rows" in result.warnings[-1]
+    assert output_row["roll_detection_available"] == False
+    assert output_row["roll_detection_available_rows"] == len(rows) - 2
+    assert output_row["roll_detection_unavailable_rows"] == 2
+    assert report["summary"]["roll_detection_unavailable_rows"] == 2
