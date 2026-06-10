@@ -135,10 +135,18 @@ def test_causal_base_schema_synthetic_and_source_lineage(tmp_path: Path) -> None
     output = pd.read_parquet(out_path)
     assert list(output.columns) == OUTPUT_COLUMNS
     assert output["ts"].is_monotonic_increasing
+    assert {
+        "causal_invalid_reason",
+        "session_calendar_status",
+        "holiday_calendar_available",
+        "early_close_calendar_available",
+        "calendar_coverage_status",
+    }.issubset(output.columns)
 
     synthetic = output.loc[output["is_synthetic"]].iloc[0]
     assert synthetic["raw_row_present"] == False
     assert synthetic["causal_valid"] == False
+    assert "synthetic" in synthetic["causal_invalid_reason"]
     assert synthetic["boundary_session_flag"] == True
     assert pd.isna(synthetic["source_row_number"])
     assert synthetic["open"] == 100.5
@@ -153,6 +161,8 @@ def test_causal_base_schema_synthetic_and_source_lineage(tmp_path: Path) -> None
     assert raw_rows["inside_session"].all()
     assert raw_rows["boundary_session_flag"].all()
     assert not raw_rows["causal_valid"].any()
+    assert raw_rows["causal_invalid_reason"].str.contains("boundary_session").all()
+    assert output["calendar_coverage_status"].eq("regular_session_only").all()
 
 
 def test_roll_boundary_sets_window_and_blocks_causal_valid(tmp_path: Path) -> None:
@@ -172,6 +182,8 @@ def test_roll_boundary_sets_window_and_blocks_causal_valid(tmp_path: Path) -> No
                 "low": 69.0 + i,
                 "close": 70.5 + i,
                 "volume": 10 + i,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             }
         )
     _write_raw(raw_path, rows)
@@ -184,6 +196,7 @@ def test_roll_boundary_sets_window_and_blocks_causal_valid(tmp_path: Path) -> No
     )
 
     assert result.status == "WARN"
+    assert result.failures == []
     output = pd.read_parquet(out_path)
     assert output["roll_boundary_flag"].sum() == 1
     assert output["symbol_change_flag"].sum() == 1
@@ -193,6 +206,7 @@ def test_roll_boundary_sets_window_and_blocks_causal_valid(tmp_path: Path) -> No
     window = output.loc[[boundary_idx - 1, boundary_idx, boundary_idx + 1]]
     assert window["roll_window_flag"].all()
     assert not window["causal_valid"].any()
+    assert window["causal_invalid_reason"].str.contains("roll_window").all()
 
 
 def test_roll_exclusion_is_not_warn_under_threshold(tmp_path: Path) -> None:
@@ -313,6 +327,23 @@ def test_reports_are_written(tmp_path: Path) -> None:
     assert manifest["outputs"][0]["roll_detection_available"] is True
     assert manifest["outputs"][0]["roll_detection_source"] == "instrument_id"
     assert manifest["outputs"][0]["roll_policy_status"] == "active"
+    assert manifest["outputs"][0]["raw_schema_policy"] == "strict"
+    assert manifest["outputs"][0]["required_raw_schema_cols"] == [
+        "ts_event",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "rtype",
+        "publisher_id",
+        "instrument_id",
+        "symbol",
+        "data_quality_status",
+        "data_quality_degraded",
+    ]
+    assert manifest["outputs"][0]["raw_schema_missing_cols"] == []
+    assert manifest["outputs"][0]["missing_required_raw_cols"] == []
     assert manifest["outputs"][0]["symbol_nonnull_count"] == 1
     assert manifest["outputs"][0]["instrument_id_nonnull_count"] == 1
     assert manifest["outputs"][0]["instrument_id_nunique"] == 1
@@ -325,6 +356,7 @@ def test_reports_are_written(tmp_path: Path) -> None:
     assert manifest["outputs"][0]["session_calendar_status"] == "config_backed_regular_session"
     assert manifest["outputs"][0]["holiday_calendar_available"] is False
     assert manifest["outputs"][0]["early_close_calendar_available"] is False
+    assert manifest["outputs"][0]["calendar_coverage_status"] == "regular_session_only"
     assert "warnings" in manifest["outputs"][0]
     assert "holiday calendar unavailable: using hardcoded regular session" not in manifest["outputs"][0]["warnings"]
     assert "early-close calendar unavailable: using hardcoded regular session" not in manifest["outputs"][0]["warnings"]
@@ -336,6 +368,9 @@ def test_reports_are_written(tmp_path: Path) -> None:
     assert validation_file["roll_window_threshold_breached"] is False
     assert validation_file["degraded_rows_pct"] == 0.0
     assert validation_file["degraded_threshold_breached"] is False
+    assert validation_file["raw_schema_policy"] == "strict"
+    assert validation_file["raw_schema_missing_cols"] == []
+    assert validation_file["calendar_coverage_status"] == "regular_session_only"
     assert validation["summary"]["synthetic_gap_threshold_breached_files"] == 0
     assert validation["summary"]["roll_window_threshold_breached_files"] == 0
     assert validation["summary"]["degraded_threshold_breached_files"] == 0
@@ -375,9 +410,14 @@ def test_calendar_config_removes_hardcoded_calendar_warning(tmp_path: Path) -> N
     )
 
     assert result.session_calendar_status == "config_backed_regular_session"
+    assert result.calendar_coverage_status == "regular_session_only"
     assert result.holiday_calendar_available is False
     assert result.early_close_calendar_available is False
     assert "hardcoded session calendar used" not in result.warnings
+    assert (
+        "holiday/early-close calendar coverage unavailable: regular session only"
+        in result.warnings
+    )
 
 
 def test_early_close_changes_minutes_until_session_close(tmp_path: Path) -> None:
@@ -413,6 +453,7 @@ def test_early_close_changes_minutes_until_session_close(tmp_path: Path) -> None
     )
 
     assert result.session_calendar_status == "config_backed"
+    assert result.calendar_coverage_status == "config_backed"
     assert result.holiday_calendar_available is False
     assert result.early_close_calendar_available is True
     output = pd.read_parquet(out_path)
@@ -453,6 +494,7 @@ def test_closed_date_is_excluded(tmp_path: Path) -> None:
     )
 
     assert result.session_calendar_status == "config_backed"
+    assert result.calendar_coverage_status == "config_backed"
     assert result.holiday_calendar_available is True
     assert result.early_close_calendar_available is False
     output = pd.read_parquet(out_path)
@@ -568,6 +610,10 @@ def test_boundary_sessions_are_not_causal_valid(tmp_path: Path) -> None:
     output = pd.read_parquet(out_path)
     assert output["boundary_session_flag"].tolist() == [True, False, True]
     assert output["causal_valid"].tolist() == [False, True, False]
+    assert output.loc[output["causal_valid"], "causal_invalid_reason"].eq("").all()
+    assert output.loc[output["boundary_session_flag"], "causal_invalid_reason"].str.contains(
+        "boundary_session"
+    ).all()
 
 
 def test_year_boundary_bleed_prevents_boundary_flag_when_adjacent_data_exists(
@@ -706,6 +752,8 @@ def test_synthetic_gap_at_max_limit_is_filled(tmp_path: Path) -> None:
                 "low": 99.0,
                 "close": 100.5,
                 "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             },
             {
                 "rtype": 33,
@@ -718,6 +766,8 @@ def test_synthetic_gap_at_max_limit_is_filled(tmp_path: Path) -> None:
                 "low": 100.0,
                 "close": 101.0,
                 "volume": 12,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             },
         ],
     )
@@ -761,6 +811,8 @@ def test_synthetic_gap_above_max_limit_is_not_filled(tmp_path: Path) -> None:
                 "low": 99.0,
                 "close": 100.5,
                 "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             },
             {
                 "rtype": 33,
@@ -773,6 +825,8 @@ def test_synthetic_gap_above_max_limit_is_not_filled(tmp_path: Path) -> None:
                 "low": 100.0,
                 "close": 101.0,
                 "volume": 12,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             },
         ],
     )
@@ -808,6 +862,8 @@ def test_no_synthetic_fill_across_instrument_change_when_metadata_available(
                 "low": 69.0,
                 "close": 70.5,
                 "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             },
             {
                 "rtype": 33,
@@ -820,6 +876,8 @@ def test_no_synthetic_fill_across_instrument_change_when_metadata_available(
                 "low": 70.0,
                 "close": 71.0,
                 "volume": 12,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             },
         ],
     )
@@ -857,6 +915,8 @@ def test_synthetic_warning_only_triggers_above_threshold(tmp_path: Path) -> None
                 "low": 99.0,
                 "close": 100.5,
                 "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             },
             {
                 "rtype": 33,
@@ -869,6 +929,8 @@ def test_synthetic_warning_only_triggers_above_threshold(tmp_path: Path) -> None
                 "low": 100.0,
                 "close": 101.0,
                 "volume": 12,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             },
         ],
     )
@@ -910,6 +972,8 @@ def test_no_synthetic_fill_across_session_boundary(tmp_path: Path) -> None:
                 "low": 99.0,
                 "close": 100.5,
                 "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             },
             {
                 "rtype": 33,
@@ -922,6 +986,8 @@ def test_no_synthetic_fill_across_session_boundary(tmp_path: Path) -> None:
                 "low": 100.0,
                 "close": 101.0,
                 "volume": 12,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             },
         ],
     )
@@ -957,10 +1023,11 @@ def test_metadata_with_timestamp_index_file_passes(tmp_path: Path) -> None:
         ],
     )
 
-    result = process_file(raw_path, out_path, profile="tier_1_CL_ES_ZN")
+    result = process_file(raw_path, out_path, profile="metadata_optional_test")
 
-    assert result.status == "PASS"
+    assert result.status == "WARN"
     assert result.raw_schema_variant == "metadata_no_ts_event"
+    assert result.raw_schema_policy == "relaxed"
     assert result.timestamp_source == "dataframe_index"
     assert result.metadata_available is True
     assert result.roll_detection_available is True
@@ -994,8 +1061,9 @@ def test_full_databento_schema_file_passes(tmp_path: Path) -> None:
 
     result = process_file(raw_path, out_path, profile="tier_1_CL_ES_ZN")
 
-    assert result.status == "PASS"
+    assert result.status == "WARN"
     assert result.raw_schema_variant == "databento_full"
+    assert result.raw_schema_policy == "strict"
     assert result.timestamp_source == "ts_event_column"
     assert result.roll_policy_status == "active"
 
@@ -1007,19 +1075,27 @@ def test_missing_timestamp_fails(tmp_path: Path) -> None:
     pd.DataFrame(
         [
             {
+                "rtype": 33,
+                "publisher_id": 1,
+                "instrument_id": 100,
+                "symbol": "ZNH4",
                 "open": 110.0,
                 "high": 111.0,
                 "low": 109.0,
                 "close": 110.5,
                 "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             }
         ]
     ).to_parquet(raw_path, index=False)
 
-    result = process_file(raw_path, out_path, profile="tier_0_smoke")
+    result = process_file(raw_path, out_path, profile="tier_1_core")
 
     assert result.status == "FAIL"
-    assert "missing timestamp source" in result.failures
+    assert result.missing_required_raw_cols == ["ts_event"]
+    assert result.raw_schema_missing_cols == ["ts_event"]
+    assert "missing required raw schema columns: ts_event" in result.failures
     assert not out_path.exists()
 
 
@@ -1031,10 +1107,16 @@ def test_missing_ohlcv_column_fails(tmp_path: Path) -> None:
         [
             {
                 "ts_event": "2024-01-02T15:00:00Z",
+                "rtype": 33,
+                "publisher_id": 1,
+                "instrument_id": 100,
+                "symbol": "ZNH4",
                 "open": 110.0,
                 "high": 111.0,
                 "low": 109.0,
                 "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             }
         ],
     )
@@ -1043,7 +1125,70 @@ def test_missing_ohlcv_column_fails(tmp_path: Path) -> None:
 
     assert result.status == "FAIL"
     assert result.missing_required_raw_cols == ["close"]
-    assert "missing required OHLCV columns" in result.failures
+    assert result.raw_schema_missing_cols == ["close"]
+    assert "missing required raw schema columns: close" in result.failures
+    assert not out_path.exists()
+
+
+def test_production_profile_fails_if_data_quality_status_missing(tmp_path: Path) -> None:
+    raw_path = tmp_path / "data" / "raw" / "ES" / "2024.parquet"
+    out_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
+    _write_raw(
+        raw_path,
+        [
+            {
+                "ts_event": "2024-01-02T15:00:00Z",
+                "rtype": 33,
+                "publisher_id": 1,
+                "instrument_id": 100,
+                "symbol": "ESH4",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 10,
+                "data_quality_degraded": False,
+            }
+        ],
+    )
+
+    result = process_file(raw_path, out_path, profile="tier_1_core")
+
+    assert result.status == "FAIL"
+    assert result.missing_required_raw_cols == ["data_quality_status"]
+    assert result.raw_schema_missing_cols == ["data_quality_status"]
+    assert "missing required raw schema columns: data_quality_status" in result.failures
+    assert not out_path.exists()
+
+
+def test_production_profile_fails_if_data_quality_degraded_missing(tmp_path: Path) -> None:
+    raw_path = tmp_path / "data" / "raw" / "ES" / "2024.parquet"
+    out_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
+    _write_raw(
+        raw_path,
+        [
+            {
+                "ts_event": "2024-01-02T15:00:00Z",
+                "rtype": 33,
+                "publisher_id": 1,
+                "instrument_id": 100,
+                "symbol": "ESH4",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 10,
+                "data_quality_status": "available",
+            }
+        ],
+    )
+
+    result = process_file(raw_path, out_path, profile="tier_1_core")
+
+    assert result.status == "FAIL"
+    assert result.missing_required_raw_cols == ["data_quality_degraded"]
+    assert result.raw_schema_missing_cols == ["data_quality_degraded"]
+    assert "missing required raw schema columns: data_quality_degraded" in result.failures
     assert not out_path.exists()
 
 
@@ -1057,6 +1202,8 @@ def test_symbol_change_without_instrument_id_does_not_activate_roll_window(
         raw_path,
         [
             {
+                "rtype": 33,
+                "publisher_id": 1,
                 "ts_event": "2024-01-02T15:00:00Z",
                 "symbol": "ESH4",
                 "open": 100.0,
@@ -1077,8 +1224,9 @@ def test_symbol_change_without_instrument_id_does_not_activate_roll_window(
         ],
     )
 
-    result = process_file(raw_path, out_path, profile="tier_0_smoke")
+    result = process_file(raw_path, out_path, profile="metadata_optional_test")
 
+    assert result.status == "WARN"
     assert result.roll_detection_available is False
     output = pd.read_parquet(out_path)
     assert output["symbol_change_flag"].sum() == 1
@@ -1087,7 +1235,7 @@ def test_symbol_change_without_instrument_id_does_not_activate_roll_window(
     assert output["roll_window_flag"].sum() == 0
     assert output["roll_detection_available"].eq(False).all()
 
-    write_reports([result], reports_root, "tier_1_CL_ES_ZN")
+    write_reports([result], reports_root, "metadata_optional_test")
     manifest = json.loads((reports_root / "causal_base_manifest.json").read_text())
     item = manifest["outputs"][0]
     assert item["roll_detection_available"] is False
@@ -1105,12 +1253,16 @@ def test_production_profile_fails_if_roll_metadata_missing(tmp_path: Path) -> No
         [
             {
                 "ts_event": "2024-01-02T15:00:00Z",
+                "rtype": 33,
+                "publisher_id": 1,
                 "symbol": "ESH4",
                 "open": 100.0,
                 "high": 101.0,
                 "low": 99.0,
                 "close": 100.5,
                 "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
             }
         ],
     )
@@ -1119,10 +1271,13 @@ def test_production_profile_fails_if_roll_metadata_missing(tmp_path: Path) -> No
     alias_result = process_file(raw_path, alias_out_path, profile="tier_1_CL_ES_ZN")
 
     assert result.status == "FAIL"
-    assert "required roll metadata unavailable" in result.failures
+    assert result.missing_required_raw_cols == ["instrument_id"]
+    assert result.raw_schema_missing_cols == ["instrument_id"]
+    assert "missing required raw schema columns: instrument_id" in result.failures
     assert not out_path.exists()
     assert alias_result.status == "FAIL"
-    assert "required roll metadata unavailable" in alias_result.failures
+    assert alias_result.missing_required_raw_cols == ["instrument_id"]
+    assert "missing required raw schema columns: instrument_id" in alias_result.failures
     assert not alias_out_path.exists()
 
 
@@ -1172,6 +1327,7 @@ def test_degraded_data_quality_blocks_whole_session_from_causal_valid(tmp_path: 
     assert raw_rows["session_data_quality_degraded"].all()
     assert not raw_rows["trainable_data_quality"].any()
     assert not raw_rows["causal_valid"].any()
+    assert raw_rows["causal_invalid_reason"].str.contains("degraded_session").all()
 
 
 def test_degraded_warning_only_triggers_above_threshold(tmp_path: Path) -> None:

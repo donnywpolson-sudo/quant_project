@@ -34,6 +34,14 @@ STATIC_PROFILE_YEARS = {
 
 REQUIRED_OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
 AUDIT_RAW_COLUMNS = ["rtype", "publisher_id", "instrument_id", "symbol"]
+STRICT_RAW_COLUMNS = [
+    "ts_event",
+    *REQUIRED_OHLCV_COLUMNS,
+    *AUDIT_RAW_COLUMNS,
+    "data_quality_status",
+    "data_quality_degraded",
+]
+RELAXED_RAW_SCHEMA_PROFILES = {"metadata_optional_test"}
 
 OUTPUT_COLUMNS = [
     "ts",
@@ -60,10 +68,15 @@ OUTPUT_COLUMNS = [
     "trainable_data_quality",
     "inside_session",
     "causal_valid",
+    "causal_invalid_reason",
     "session_id",
     "session_date",
     "session_segment_id",
     "boundary_session_flag",
+    "session_calendar_status",
+    "holiday_calendar_available",
+    "early_close_calendar_available",
+    "calendar_coverage_status",
     "session_template",
     "is_session_open",
     "is_session_close",
@@ -150,6 +163,14 @@ class SessionCalendar:
     def early_close_calendar_available(self) -> bool:
         return bool(self.early_closes)
 
+    @property
+    def calendar_coverage_status(self) -> str:
+        if not self.config_available:
+            return "hardcoded_regular_session"
+        if self.holiday_calendar_available or self.early_close_calendar_available:
+            return "config_backed"
+        return "regular_session_only"
+
 
 @dataclass
 class ValidationResult:
@@ -180,9 +201,13 @@ class ValidationResult:
     roll_detection_available: bool = False
     roll_detection_source: str = "unavailable"
     roll_policy_status: str = "unavailable_metadata"
+    raw_schema_policy: str = "strict"
+    required_raw_schema_cols: list[str] = field(default_factory=lambda: STRICT_RAW_COLUMNS.copy())
+    raw_schema_missing_cols: list[str] = field(default_factory=list)
     session_calendar_status: str = "hardcoded_regular_session"
     holiday_calendar_available: bool = False
     early_close_calendar_available: bool = False
+    calendar_coverage_status: str = "hardcoded_regular_session"
     symbol_nonnull_count: int = 0
     instrument_id_nonnull_count: int = 0
     instrument_id_nunique: int = 0
@@ -222,6 +247,8 @@ class ValidationResult:
 
     def to_csv_row(self) -> dict[str, object]:
         data = self.to_dict()
+        data["required_raw_schema_cols"] = ";".join(self.required_raw_schema_cols)
+        data["raw_schema_missing_cols"] = ";".join(self.raw_schema_missing_cols)
         data["missing_required_raw_cols"] = ";".join(self.missing_required_raw_cols)
         data["missing_audit_cols"] = ";".join(self.missing_audit_cols)
         data["warnings"] = ";".join(self.warnings)
@@ -332,6 +359,18 @@ def resolve_profile_name(profile: str, aliases: dict[str, str]) -> str:
         seen.add(resolved)
         resolved = aliases[resolved]
     return resolved
+
+
+def raw_schema_policy_for_profile(resolved_profile: str) -> str:
+    if resolved_profile in RELAXED_RAW_SCHEMA_PROFILES:
+        return "relaxed"
+    return "strict"
+
+
+def required_raw_schema_cols_for_policy(policy: str) -> list[str]:
+    if policy == "relaxed":
+        return REQUIRED_OHLCV_COLUMNS.copy()
+    return STRICT_RAW_COLUMNS.copy()
 
 
 def _parse_hhmm(value: str) -> tuple[int, int]:
@@ -540,6 +579,7 @@ def _prepare_raw_frame(
     year: int,
     result: ValidationResult | None,
     required: bool,
+    raw_schema_policy: str = "relaxed",
 ) -> pd.DataFrame | None:
     if not input_path.exists():
         if required and result is not None:
@@ -556,11 +596,15 @@ def _prepare_raw_frame(
             result.failures.append("empty file")
         return None
 
-    missing_required = [c for c in REQUIRED_OHLCV_COLUMNS if c not in raw.columns]
+    required_raw_cols = required_raw_schema_cols_for_policy(raw_schema_policy)
+    missing_required = [c for c in required_raw_cols if c not in raw.columns]
     if missing_required:
         if required and result is not None:
             result.missing_required_raw_cols = missing_required
-            result.failures.append("missing required OHLCV columns")
+            result.raw_schema_missing_cols = missing_required
+            result.failures.append(
+                "missing required raw schema columns: " + ", ".join(missing_required)
+            )
         return None
 
     ts, timestamp_source = _timestamp_from_raw(raw)
@@ -722,6 +766,10 @@ def _build_synthetic_rows(
                         "roll_detection_available": getattr(prev, "roll_detection_available"),
                         "roll_detection_source": getattr(prev, "roll_detection_source"),
                         "roll_policy_status": getattr(prev, "roll_policy_status"),
+                        "session_calendar_status": getattr(prev, "session_calendar_status"),
+                        "holiday_calendar_available": getattr(prev, "holiday_calendar_available"),
+                        "early_close_calendar_available": getattr(prev, "early_close_calendar_available"),
+                        "calendar_coverage_status": getattr(prev, "calendar_coverage_status"),
                     }
                 )
 
@@ -828,6 +876,38 @@ def _add_boundary_session_flag(
     return df
 
 
+def _build_causal_invalid_reason(df: pd.DataFrame, missing_required_raw_cols: list[str]) -> pd.Series:
+    reasons = pd.Series([""] * len(df), index=df.index, dtype="string")
+
+    reason_masks = [
+        ("raw_row_missing", ~df["raw_row_present"]),
+        ("synthetic", df["is_synthetic"]),
+        ("invalid_ohlcv", ~df["valid_ohlcv"]),
+        ("outside_session", ~df["inside_session"]),
+        ("degraded_session", df["session_data_quality_degraded"]),
+        ("roll_window", df["roll_window_flag"]),
+        ("boundary_session", df["boundary_session_flag"]),
+    ]
+    for reason, mask in reason_masks:
+        mask = mask.fillna(False).astype(bool) & ~df["causal_valid"]
+        reasons.loc[mask] = np.where(
+            reasons.loc[mask].eq(""),
+            reason,
+            reasons.loc[mask] + "|" + reason,
+        )
+
+    if missing_required_raw_cols:
+        invalid = ~df["causal_valid"]
+        reasons.loc[invalid] = np.where(
+            reasons.loc[invalid].eq(""),
+            "missing_required_raw_cols",
+            reasons.loc[invalid] + "|missing_required_raw_cols",
+        )
+
+    reasons.loc[df["causal_valid"]] = ""
+    return reasons
+
+
 def _coerce_output_types(df: pd.DataFrame) -> pd.DataFrame:
     for col in OUTPUT_COLUMNS:
         if col not in df.columns:
@@ -851,6 +931,8 @@ def _coerce_output_types(df: pd.DataFrame) -> pd.DataFrame:
         "roll_window_flag",
         "metadata_available",
         "roll_detection_available",
+        "holiday_calendar_available",
+        "early_close_calendar_available",
     ]
     for col in bool_cols:
         df[col] = df[col].fillna(False).astype(bool)
@@ -876,6 +958,7 @@ def _coerce_output_types(df: pd.DataFrame) -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["data_quality_status"] = df["data_quality_status"].fillna("unknown").astype(str)
     df["synthetic_gap_reason"] = df["synthetic_gap_reason"].astype("string")
+    df["causal_invalid_reason"] = df["causal_invalid_reason"].fillna("").astype("string")
 
     return df[OUTPUT_COLUMNS]
 
@@ -895,6 +978,8 @@ def process_file(
     config = load_causal_base_config(profile_config_path)
     _, _, aliases, _ = load_profile_map(profile_config_path)
     resolved_profile = resolve_profile_name(profile, aliases)
+    raw_schema_policy = raw_schema_policy_for_profile(resolved_profile)
+    required_raw_schema_cols = required_raw_schema_cols_for_policy(raw_schema_policy)
     effective_max_synthetic_gap_minutes = (
         config.max_synthetic_gap_minutes
         if max_synthetic_gap_minutes == DEFAULT_MAX_SYNTHETIC_GAP_MINUTES
@@ -911,9 +996,12 @@ def process_file(
         year=year,
         input_path=relative_source_path(input_path),
         output_path=relative_source_path(output_path),
+        raw_schema_policy=raw_schema_policy,
+        required_raw_schema_cols=required_raw_schema_cols,
         session_calendar_status=calendar.status,
         holiday_calendar_available=calendar.holiday_calendar_available,
         early_close_calendar_available=calendar.early_close_calendar_available,
+        calendar_coverage_status=calendar.calendar_coverage_status,
         max_synthetic_rows_pct_threshold=config.max_synthetic_rows_pct,
         max_synthetic_gap_minutes_threshold=effective_max_synthetic_gap_minutes,
         max_degraded_rows_pct_threshold=config.max_degraded_rows_pct,
@@ -922,6 +1010,10 @@ def process_file(
 
     if not calendar.config_available:
         result.warnings.append("hardcoded session calendar used")
+    elif calendar.calendar_coverage_status == "regular_session_only":
+        result.warnings.append(
+            "holiday/early-close calendar coverage unavailable: regular session only"
+        )
 
     current_raw = _prepare_raw_frame(
         input_path,
@@ -929,6 +1021,7 @@ def process_file(
         year=year,
         result=result,
         required=True,
+        raw_schema_policy=raw_schema_policy,
     )
     if result.failures or current_raw is None:
         return result
@@ -953,6 +1046,7 @@ def process_file(
         year=year - 1,
         result=None,
         required=False,
+        raw_schema_policy="relaxed",
     )
     if prev_raw is not None:
         frames.append(prev_raw)
@@ -963,6 +1057,7 @@ def process_file(
         year=year + 1,
         result=None,
         required=False,
+        raw_schema_policy="relaxed",
     )
     if next_raw is not None:
         frames.append(next_raw)
@@ -974,6 +1069,10 @@ def process_file(
     df["roll_detection_available"] = result.roll_detection_available
     df["roll_detection_source"] = result.roll_detection_source
     df["roll_policy_status"] = result.roll_policy_status
+    df["session_calendar_status"] = result.session_calendar_status
+    df["holiday_calendar_available"] = result.holiday_calendar_available
+    df["early_close_calendar_available"] = result.early_close_calendar_available
+    df["calendar_coverage_status"] = result.calendar_coverage_status
 
     base_cols = [
         "ts",
@@ -1014,6 +1113,10 @@ def process_file(
         "roll_detection_available",
         "roll_detection_source",
         "roll_policy_status",
+        "session_calendar_status",
+        "holiday_calendar_available",
+        "early_close_calendar_available",
+        "calendar_coverage_status",
     ]
     df = df[base_cols]
 
@@ -1062,6 +1165,9 @@ def process_file(
         & ~df["roll_window_flag"]
         & ~df["boundary_session_flag"]
     ).astype(bool)
+    df["causal_invalid_reason"] = _build_causal_invalid_reason(
+        df, result.missing_required_raw_cols
+    )
 
     result.output_rows = len(df)
     result.synthetic_rows = int(df["is_synthetic"].sum())
@@ -1193,6 +1299,10 @@ def write_reports(results: Iterable[ValidationResult], reports_root: Path, profi
                 "synthetic_rows_pct": row["synthetic_rows_pct"],
                 "synthetic_gap_threshold_breached": row["synthetic_gap_threshold_breached"],
                 "raw_schema_variant": row["raw_schema_variant"],
+                "raw_schema_policy": row["raw_schema_policy"],
+                "required_raw_schema_cols": row["required_raw_schema_cols"],
+                "raw_schema_missing_cols": row["raw_schema_missing_cols"],
+                "missing_required_raw_cols": row["missing_required_raw_cols"],
                 "timestamp_source": row["timestamp_source"],
                 "metadata_available": row["metadata_available"],
                 "roll_detection_available": row["roll_detection_available"],
@@ -1223,6 +1333,7 @@ def write_reports(results: Iterable[ValidationResult], reports_root: Path, profi
                 "session_calendar_status": row["session_calendar_status"],
                 "holiday_calendar_available": row["holiday_calendar_available"],
                 "early_close_calendar_available": row["early_close_calendar_available"],
+                "calendar_coverage_status": row["calendar_coverage_status"],
                 "warning_count": row["warning_count"],
                 "warnings": row["warnings"],
                 "failure_count": row["failure_count"],
