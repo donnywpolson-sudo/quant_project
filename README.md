@@ -65,3 +65,19 @@ reports/causal_base/
 ```powershell
 python -m pytest -q
 ```
+
+## Simple GitHub Sync
+
+Push this computer's code changes to GitHub:
+
+```powershell
+python push_github.py
+```
+
+Pull GitHub changes onto this computer before working:
+
+```powershell
+python pull_github.py
+```
+
+These scripts are for code/config/docs/tests only. Raw data and generated reports stay out of GitHub.
