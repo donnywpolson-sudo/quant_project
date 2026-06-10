@@ -16,11 +16,14 @@ import yaml
 
 DEFAULT_PROFILE = "all_causal"
 DISCOVERY_PROFILES = {"all_causal", "all_causal_data", "all_raw", "all_raw_data"}
+DEFAULT_PROFILE_CONFIG = Path("configs/alpha_tiered.yaml")
 STATIC_PROFILE_MARKETS = {
     "tier_1_CL_ES_ZN": ["CL", "ES", "ZN"],
+    "tier_1_core": ["CL", "ES", "ZN"],
 }
 STATIC_PROFILE_YEARS = {
     "tier_1_CL_ES_ZN": [2023, 2024, 2025],
+    "tier_1_core": [2023, 2024, 2025],
 }
 
 ENTRY_OFFSET_BARS = 1
@@ -41,6 +44,7 @@ REQUIRED_INPUT_COLUMNS = [
     "session_segment_id",
     "is_synthetic",
     "valid_ohlcv",
+    "boundary_session_flag",
     "roll_window_flag",
 ]
 
@@ -198,18 +202,77 @@ def discover_inputs(input_root: Path) -> list[tuple[str, int, Path]]:
     return inputs
 
 
-def resolve_profile_inputs(profile: str, input_root: Path) -> list[tuple[str, int, Path]]:
-    if profile in DISCOVERY_PROFILES:
+def _read_yaml(path: Path) -> Mapping[str, object]:
+    if not path.exists():
+        return {}
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, Mapping):
+        return {}
+    return payload
+
+
+def load_profile_map(
+    profile_config_path: Path = DEFAULT_PROFILE_CONFIG,
+) -> tuple[dict[str, list[str]], dict[str, list[int]], dict[str, str], set[str]]:
+    markets = {key: value[:] for key, value in STATIC_PROFILE_MARKETS.items()}
+    years = {key: value[:] for key, value in STATIC_PROFILE_YEARS.items()}
+    aliases: dict[str, str] = {}
+    discovery = set(DISCOVERY_PROFILES)
+
+    payload = _read_yaml(profile_config_path)
+    profiles = payload.get("profiles", {})
+    if isinstance(profiles, Mapping):
+        for profile_name, profile in profiles.items():
+            if not isinstance(profile_name, str) or not isinstance(profile, Mapping):
+                continue
+            if bool(profile.get("discovery", False)):
+                discovery.add(profile_name)
+                continue
+            profile_markets = profile.get("markets", [])
+            profile_years = profile.get("years", [])
+            if isinstance(profile_markets, list) and isinstance(profile_years, list):
+                markets[profile_name] = [str(item) for item in profile_markets]
+                years[profile_name] = [int(item) for item in profile_years]
+
+    raw_aliases = payload.get("aliases", {})
+    if isinstance(raw_aliases, Mapping):
+        aliases = {str(key): str(value) for key, value in raw_aliases.items()}
+
+    return markets, years, aliases, discovery
+
+
+def resolve_profile_name(profile: str, aliases: Mapping[str, str]) -> str:
+    seen: set[str] = set()
+    resolved = profile
+    while resolved in aliases:
+        if resolved in seen:
+            raise SystemExit(f"Profile alias cycle detected at {resolved!r}")
+        seen.add(resolved)
+        resolved = aliases[resolved]
+    return resolved
+
+
+def resolve_profile_inputs(
+    profile: str,
+    input_root: Path,
+    profile_config_path: Path = DEFAULT_PROFILE_CONFIG,
+) -> list[tuple[str, int, Path]]:
+    profile_markets, profile_years, aliases, discovery_profiles = load_profile_map(
+        profile_config_path
+    )
+    resolved_profile = resolve_profile_name(profile, aliases)
+
+    if resolved_profile in discovery_profiles:
         return discover_inputs(input_root)
 
-    if profile not in STATIC_PROFILE_MARKETS:
-        known = ", ".join(sorted([*STATIC_PROFILE_MARKETS, *DISCOVERY_PROFILES]))
+    if resolved_profile not in profile_markets:
+        known = ", ".join(sorted([*profile_markets, *discovery_profiles]))
         raise SystemExit(f"Unknown profile {profile!r}. Known profiles: {known}")
 
     return [
         (market, year, input_root / market / f"{year}.parquet")
-        for market in STATIC_PROFILE_MARKETS[profile]
-        for year in STATIC_PROFILE_YEARS[profile]
+        for market in profile_markets[resolved_profile]
+        for year in profile_years[resolved_profile]
     ]
 
 
@@ -332,23 +395,28 @@ def _future_path_checks(df: pd.DataFrame, horizon_offset: int) -> dict[str, pd.S
     current_segment = df["session_segment_id"].astype("string")
     synthetic = pd.Series(False, index=idx)
     invalid_ohlcv = pd.Series(False, index=idx)
+    boundary = pd.Series(False, index=idx)
     roll = pd.Series(False, index=idx)
     segment_cross = pd.Series(False, index=idx)
 
     roll_boundary = _as_bool(df, "roll_boundary_flag")
-    for offset in range(1, horizon_offset + 1):
+    for offset in range(0, horizon_offset + 1):
         synthetic |= _as_bool(df, "is_synthetic").shift(-offset, fill_value=False)
         invalid_ohlcv |= ~_as_bool(df, "valid_ohlcv", default=True).shift(
             -offset, fill_value=True
         )
+        boundary |= _as_bool(df, "boundary_session_flag").shift(-offset, fill_value=False)
         roll |= _as_bool(df, "roll_window_flag").shift(-offset, fill_value=False)
         roll |= roll_boundary.shift(-offset, fill_value=False)
+        if offset == 0:
+            continue
         shifted_segment = df["session_segment_id"].astype("string").shift(-offset)
         segment_cross |= shifted_segment.ne(current_segment).fillna(True)
 
     return {
         "synthetic": synthetic.astype(bool),
         "invalid_ohlcv": invalid_ohlcv.astype(bool),
+        "boundary": boundary.astype(bool),
         "roll": roll.astype(bool),
         "segment_cross": segment_cross.astype(bool),
     }
@@ -460,6 +528,7 @@ def add_labels(df: pd.DataFrame, config: MarketConfig) -> pd.DataFrame:
         & ~checks_15m["segment_cross"]
         & ~checks_15m["synthetic"]
         & ~checks_15m["invalid_ohlcv"]
+        & ~checks_15m["boundary"]
         & ~checks_15m["roll"]
         & ~entry_exit_invalid
     )
@@ -472,6 +541,7 @@ def add_labels(df: pd.DataFrame, config: MarketConfig) -> pd.DataFrame:
         ("session_segment_cross", checks_15m["segment_cross"]),
         ("synthetic_path", checks_15m["synthetic"]),
         ("invalid_ohlcv_path", checks_15m["invalid_ohlcv"]),
+        ("boundary_session_path", checks_15m["boundary"]),
         ("roll_path", checks_15m["roll"]),
         ("entry_exit_price_invalid", entry_exit_invalid),
     ]
@@ -523,6 +593,7 @@ def add_labels(df: pd.DataFrame, config: MarketConfig) -> pd.DataFrame:
         & ~checks_30m["segment_cross"]
         & ~checks_30m["synthetic"]
         & ~checks_30m["invalid_ohlcv"]
+        & ~checks_30m["boundary"]
         & ~checks_30m["roll"]
     )
     future_high_30m = _future_extreme(df, "high", REGIME_OFFSET_BARS, "max")
@@ -701,7 +772,10 @@ def write_reports(results: Iterable[LabelResult], reports_root: Path, profile: s
                 "roll_protection_unavailable": row["roll_protection_unavailable"],
                 "config": row["config"],
                 "warnings": row["warnings"],
+                "failures": row["failures"],
                 "status": row["status"],
+                "warning_count": row["warning_count"],
+                "failure_count": row["failure_count"],
             }
             for row in rows
         ],
@@ -723,6 +797,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-root", default="data/labeled")
     parser.add_argument("--reports-root", default="reports/labels")
     parser.add_argument("--costs-config", default="configs/costs.yaml")
+    parser.add_argument("--profile-config", default=str(DEFAULT_PROFILE_CONFIG))
     return parser
 
 
@@ -732,7 +807,8 @@ def main() -> int:
     output_root = Path(args.output_root)
     reports_root = Path(args.reports_root)
     costs_config = Path(args.costs_config)
-    inputs = resolve_profile_inputs(args.profile, input_root)
+    profile_config = Path(args.profile_config)
+    inputs = resolve_profile_inputs(args.profile, input_root, profile_config)
 
     results: list[LabelResult] = []
     for market, year, input_path in inputs:

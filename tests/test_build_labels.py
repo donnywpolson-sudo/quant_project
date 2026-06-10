@@ -13,6 +13,7 @@ from scripts.build_labels import (
     add_labels,
     load_market_config,
     process_file,
+    resolve_profile_inputs,
     write_reports,
 )
 
@@ -37,6 +38,7 @@ def _base_rows(count: int = 40, market: str = "ES") -> list[dict[str, object]]:
                 "session_segment_id": "session_2024-01-02_seg0",
                 "is_synthetic": False,
                 "valid_ohlcv": True,
+                "boundary_session_flag": False,
                 "roll_boundary_flag": False,
                 "roll_window_flag": False,
                 "roll_detection_available": True,
@@ -76,12 +78,38 @@ def test_entry_exit_alignment_uses_next_bar_open_not_close_t(tmp_path: Path) -> 
     assert row["target_entry_price"] != rows[0]["close"]
 
 
+def test_profile_resolution_uses_alpha_tier_aliases(tmp_path: Path) -> None:
+    input_root = tmp_path / "data" / "causally_gated_normalized"
+    config_path = tmp_path / "configs" / "alpha_tiered.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "\n".join(
+            [
+                "profiles:",
+                "  tier_1_core_recent:",
+                "    markets: [CL, ES, ZN]",
+                "    years: [2023, 2024, 2025]",
+                "aliases:",
+                "  tier_1_core: tier_1_core_recent",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = resolve_profile_inputs("tier_1_core", input_root, config_path)
+
+    assert resolved[0] == ("CL", 2023, input_root / "CL" / "2023.parquet")
+    assert resolved[-1] == ("ZN", 2025, input_root / "ZN" / "2025.parquet")
+    assert len(resolved) == 9
+
+
 def test_invalid_reasons_for_current_and_future_path_flags(tmp_path: Path) -> None:
     cases = [
         ("current_causal_valid_false", 0, "causal_valid", False),
         ("session_segment_cross", 5, "session_segment_id", "session_2024-01-02_seg1"),
         ("synthetic_path", 5, "is_synthetic", True),
         ("invalid_ohlcv_path", 5, "valid_ohlcv", False),
+        ("boundary_session_path", 5, "boundary_session_flag", True),
         ("roll_path", 5, "roll_window_flag", True),
     ]
 
@@ -191,3 +219,6 @@ def test_output_schema_and_reports(tmp_path: Path) -> None:
     assert manifest["stage"] == "labels"
     assert report["summary"]["target_valid_rows"] == result.target_valid_rows
     assert manifest["outputs"][0]["config"]["tick_size"] == 0.25
+    assert manifest["outputs"][0]["warning_count"] == len(result.warnings)
+    assert manifest["outputs"][0]["failure_count"] == len(result.failures)
+    assert manifest["outputs"][0]["failures"] == result.failures

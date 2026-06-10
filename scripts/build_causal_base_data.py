@@ -96,7 +96,17 @@ DEFAULT_MAX_SYNTHETIC_GAP_MINUTES = 120
 DEFAULT_MAX_SYNTHETIC_ROWS_PCT = 2.0
 DEFAULT_MAX_DEGRADED_ROWS_PCT = 1.0
 DEFAULT_MAX_ROLL_WINDOW_ROWS_PCT = 1.0
-DEFAULT_REQUIRE_ROLL_METADATA_PROFILES = {"tier_1_core", "tier_2_liquid", "tier_3_full"}
+DEFAULT_REQUIRE_ROLL_METADATA_PROFILES = {
+    "tier_1_core",
+    "tier_1_CL_ES_ZN",
+    "tier_1_core_recent",
+    "tier_1_core_long",
+    "tier_2_liquid",
+    "tier_2_liquid_recent",
+    "tier_2_liquid_long",
+    "tier_3_full",
+    "tier_3_full_long",
+}
 
 
 @dataclass(frozen=True)

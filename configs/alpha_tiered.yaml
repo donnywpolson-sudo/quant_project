@@ -3,271 +3,271 @@ version: 1
 default_profile: tier_1_core_recent
 
 paths:
-raw_root: data/raw
-causal_base_root: data/causally_gated_normalized
-labeled_root: data/labeled
-feature_matrix_root: data/feature_matrices
-predictions_root: data/predictions
-executions_root: data/executions
-frozen_features_root: data/frozen_features
-reports_root: reports
+  raw_root: data/raw
+  causal_base_root: data/causally_gated_normalized
+  labeled_root: data/labeled
+  feature_matrix_root: data/feature_matrices
+  predictions_root: data/predictions
+  executions_root: data/executions
+  frozen_features_root: data/frozen_features
+  reports_root: reports
 
 defaults:
-downloaded_years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
+  downloaded_years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
 
-recent_years: [2023, 2024, 2025]
-long_years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
-forward_years: [2026]
+  recent_years: [2023, 2024, 2025]
+  long_years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+  forward_years: [2026]
 
-research_years: [2023, 2024]
-final_holdout_years: [2025]
+  research_years: [2023, 2024]
+  final_holdout_years: [2025]
 
-entry_lag_bars: 1
-target_horizon_bars: 15
-trend_horizon_bars: 30
-purge_bars: auto
+  entry_lag_bars: 1
+  target_horizon_bars: 15
+  trend_horizon_bars: 30
+  purge_bars: auto
 
-roll_window_bars: 15
-max_synthetic_gap_minutes: 120
+  roll_window_bars: 15
+  max_synthetic_gap_minutes: 120
 
-atr_window_bars: 60
-profit_atr_mult: 0.50
-stop_atr_mult: 1.00
-trend_adverse_atr_mult: 1.50
+  atr_window_bars: 60
+  profit_atr_mult: 0.50
+  stop_atr_mult: 1.00
+  trend_adverse_atr_mult: 1.50
 
-require_roll_metadata_for_profiles:
-- tier_1_core_recent
-- tier_1_core_long
-- tier_2_liquid_recent
-- tier_2_liquid_long
-- tier_3_full_long
-- tier_forward_2026
+  require_roll_metadata_for_profiles:
+    - tier_1_core_recent
+    - tier_1_core_long
+    - tier_2_liquid_recent
+    - tier_2_liquid_long
+    - tier_3_full_long
+    - tier_forward_2026
 
 profile_defaults:
-smoke:
-train_days: 90
-test_days: 15
-step_days: 15
-max_synthetic_rows_pct: 5.0
-max_degraded_rows_pct: 5.0
-max_roll_window_rows_pct: 2.0
+  smoke:
+    train_days: 90
+    test_days: 15
+    step_days: 15
+    max_synthetic_rows_pct: 5.0
+    max_degraded_rows_pct: 5.0
+    max_roll_window_rows_pct: 2.0
 
-recent_research:
-train_days: 365
-test_days: 30
-step_days: 30
-max_synthetic_rows_pct: 2.0
-max_degraded_rows_pct: 1.0
-max_roll_window_rows_pct: 1.0
+  recent_research:
+    train_days: 365
+    test_days: 30
+    step_days: 30
+    max_synthetic_rows_pct: 2.0
+    max_degraded_rows_pct: 1.0
+    max_roll_window_rows_pct: 1.0
 
-long_research:
-train_days: 730
-test_days: 30
-step_days: 30
-max_synthetic_rows_pct: 2.0
-max_degraded_rows_pct: 1.0
-max_roll_window_rows_pct: 1.0
+  long_research:
+    train_days: 730
+    test_days: 30
+    step_days: 30
+    max_synthetic_rows_pct: 2.0
+    max_degraded_rows_pct: 1.0
+    max_roll_window_rows_pct: 1.0
 
-production_like:
-train_days: 730
-test_days: 30
-step_days: 30
-max_synthetic_rows_pct: 1.0
-max_degraded_rows_pct: 0.5
-max_roll_window_rows_pct: 1.0
+  production_like:
+    train_days: 730
+    test_days: 30
+    step_days: 30
+    max_synthetic_rows_pct: 1.0
+    max_degraded_rows_pct: 0.5
+    max_roll_window_rows_pct: 1.0
 
 profile_requirements:
-production_like:
-require_market_config: true
-require_session_config: true
-require_roll_metadata: true
-require_cost_config: false
-allow_missing_raw_files: false
-allow_hardcoded_calendar: false
-allow_metadata_optional: false
+  production_like:
+    require_market_config: true
+    require_session_config: true
+    require_roll_metadata: true
+    require_cost_config: false
+    allow_missing_raw_files: false
+    allow_hardcoded_calendar: false
+    allow_metadata_optional: false
 
-research_only:
-require_market_config: true
-require_session_config: true
-require_roll_metadata: true
-require_cost_config: false
-allow_missing_raw_files: false
-allow_hardcoded_calendar: false
-allow_metadata_optional: false
+  research_only:
+    require_market_config: true
+    require_session_config: true
+    require_roll_metadata: true
+    require_cost_config: false
+    allow_missing_raw_files: false
+    allow_hardcoded_calendar: false
+    allow_metadata_optional: false
 
-test_only:
-require_market_config: false
-require_session_config: false
-require_roll_metadata: false
-require_cost_config: false
-allow_missing_raw_files: false
-allow_hardcoded_calendar: true
-allow_metadata_optional: true
+  test_only:
+    require_market_config: false
+    require_session_config: false
+    require_roll_metadata: false
+    require_cost_config: false
+    allow_missing_raw_files: false
+    allow_hardcoded_calendar: true
+    allow_metadata_optional: true
 
-inventory_only:
-require_market_config: false
-require_session_config: false
-require_roll_metadata: false
-require_cost_config: false
-allow_missing_raw_files: true
-allow_hardcoded_calendar: true
-allow_metadata_optional: true
+  inventory_only:
+    require_market_config: false
+    require_session_config: false
+    require_roll_metadata: false
+    require_cost_config: false
+    allow_missing_raw_files: true
+    allow_hardcoded_calendar: true
+    allow_metadata_optional: true
 
 profiles:
-tier_0_smoke:
-description: "Fastest code test: ES only, one year."
-intent: smoke_test
-requirement_set: production_like
-settings_profile: smoke
-markets: ["ES"]
-years: [2025]
-notes:
-- "Use for quick code validation only."
-- "Not enough markets or years for alpha claims."
+  tier_0_smoke:
+    description: "Fastest code test: ES only, one year."
+    intent: smoke_test
+    requirement_set: production_like
+    settings_profile: smoke
+    markets: ["ES"]
+    years: [2025]
+    notes:
+      - "Use for quick code validation only."
+      - "Not enough markets or years for alpha claims."
 
-metadata_optional_test:
-description: "Test-only profile that permits missing Databento metadata."
-intent: unit_test_only
-requirement_set: test_only
-settings_profile: smoke
-markets: ["ES"]
-years: [2024]
-forbid_research_use: true
-notes:
-- "Only for testing mixed raw schemas."
-- "Never use for research gates, labels, or WFA."
+  metadata_optional_test:
+    description: "Test-only profile that permits missing Databento metadata."
+    intent: unit_test_only
+    requirement_set: test_only
+    settings_profile: smoke
+    markets: ["ES"]
+    years: [2024]
+    forbid_research_use: true
+    notes:
+      - "Only for testing mixed raw schemas."
+      - "Never use for research gates, labels, or WFA."
 
-tier_1_core_recent:
-description: "Core proof set on recent data: equity index, energy, and rates."
-intent: core_recent_research
-requirement_set: production_like
-settings_profile: recent_research
-markets: ["CL", "ES", "ZN"]
-years: [2023, 2024, 2025]
-market_families:
-CL: energy
-ES: equity_index
-ZN: rates
-notes:
-- "Primary current research profile."
-- "Use before adding more markets."
+  tier_1_core_recent:
+    description: "Core proof set on recent data: equity index, energy, and rates."
+    intent: core_recent_research
+    requirement_set: production_like
+    settings_profile: recent_research
+    markets: ["CL", "ES", "ZN"]
+    years: [2023, 2024, 2025]
+    market_families:
+      CL: energy
+      ES: equity_index
+      ZN: rates
+    notes:
+      - "Primary current research profile."
+      - "Use before adding more markets."
 
-tier_1_core_long:
-description: "Core proof set over long history."
-intent: core_long_research
-requirement_set: production_like
-settings_profile: long_research
-markets: ["CL", "ES", "ZN"]
-years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
-market_families:
-CL: energy
-ES: equity_index
-ZN: rates
-notes:
-- "Use after tier_1_core_recent passes causal base and labels."
-- "Long history is for robustness, not faster iteration."
+  tier_1_core_long:
+    description: "Core proof set over long history."
+    intent: core_long_research
+    requirement_set: production_like
+    settings_profile: long_research
+    markets: ["CL", "ES", "ZN"]
+    years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+    market_families:
+      CL: energy
+      ES: equity_index
+      ZN: rates
+    notes:
+      - "Use after tier_1_core_recent passes causal base and labels."
+      - "Long history is for robustness, not faster iteration."
 
-tier_2_liquid_recent:
-description: "Broader liquid futures test on recent data."
-intent: liquid_recent_research
-requirement_set: production_like
-settings_profile: recent_research
-markets: ["ES", "NQ", "RTY", "YM", "CL", "GC", "ZN", "ZB"]
-years: [2023, 2024, 2025]
-market_families:
-ES: equity_index
-NQ: equity_index
-RTY: equity_index
-YM: equity_index
-CL: energy
-GC: metals
-ZN: rates
-ZB: rates
-notes:
-- "Do not treat equity-index markets as independent alpha proof."
-- "Use after tier_1_core_recent labels/features/WFA are structurally correct."
+  tier_2_liquid_recent:
+    description: "Broader liquid futures test on recent data."
+    intent: liquid_recent_research
+    requirement_set: production_like
+    settings_profile: recent_research
+    markets: ["ES", "NQ", "RTY", "YM", "CL", "GC", "ZN", "ZB"]
+    years: [2023, 2024, 2025]
+    market_families:
+      ES: equity_index
+      NQ: equity_index
+      RTY: equity_index
+      YM: equity_index
+      CL: energy
+      GC: metals
+      ZN: rates
+      ZB: rates
+    notes:
+      - "Do not treat equity-index markets as independent alpha proof."
+      - "Use after tier_1_core_recent labels/features/WFA are structurally correct."
 
-tier_2_liquid_long:
-description: "Broader liquid futures test over long history."
-intent: liquid_long_research
-requirement_set: production_like
-settings_profile: long_research
-markets: ["ES", "NQ", "RTY", "YM", "CL", "GC", "ZN", "ZB"]
-years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
-market_families:
-ES: equity_index
-NQ: equity_index
-RTY: equity_index
-YM: equity_index
-CL: energy
-GC: metals
-ZN: rates
-ZB: rates
-notes:
-- "Use for robustness after recent liquid profile passes."
-- "Equity index family is correlated; report by market family."
+  tier_2_liquid_long:
+    description: "Broader liquid futures test over long history."
+    intent: liquid_long_research
+    requirement_set: production_like
+    settings_profile: long_research
+    markets: ["ES", "NQ", "RTY", "YM", "CL", "GC", "ZN", "ZB"]
+    years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+    market_families:
+      ES: equity_index
+      NQ: equity_index
+      RTY: equity_index
+      YM: equity_index
+      CL: energy
+      GC: metals
+      ZN: rates
+      ZB: rates
+    notes:
+      - "Use for robustness after recent liquid profile passes."
+      - "Equity index family is correlated; report by market family."
 
-tier_3_full_long:
-description: "Curated full research universe over long history. Use only after gates work."
-intent: full_long_research
-requirement_set: production_like
-settings_profile: long_research
-markets: ["ES", "NQ", "RTY", "YM", "CL", "NG", "GC", "HG", "ZN", "ZB", "ZC", "ZS", "ZW"]
-years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
-requires_all_market_configs: true
-requires_cost_configs: true
-market_families:
-ES: equity_index
-NQ: equity_index
-RTY: equity_index
-YM: equity_index
-CL: energy
-NG: energy
-GC: metals
-HG: metals
-ZN: rates
-ZB: rates
-ZC: grains
-ZS: grains
-ZW: grains
-notes:
-- "Do not use until tier_1 and tier_2 gates are honest."
-- "Every market must have tick, point value, session, cost, and data-quality configs."
+  tier_3_full_long:
+    description: "Curated full research universe over long history. Use only after gates work."
+    intent: full_long_research
+    requirement_set: production_like
+    settings_profile: long_research
+    markets: ["ES", "NQ", "RTY", "YM", "CL", "NG", "GC", "HG", "ZN", "ZB", "ZC", "ZS", "ZW"]
+    years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+    requires_all_market_configs: true
+    requires_cost_configs: true
+    market_families:
+      ES: equity_index
+      NQ: equity_index
+      RTY: equity_index
+      YM: equity_index
+      CL: energy
+      NG: energy
+      GC: metals
+      HG: metals
+      ZN: rates
+      ZB: rates
+      ZC: grains
+      ZS: grains
+      ZW: grains
+    notes:
+      - "Do not use until tier_1 and tier_2 gates are honest."
+      - "Every market must have tick, point value, session, cost, and data-quality configs."
 
-tier_forward_2026:
-description: "Forward/incomplete-year validation. Do not use for feature or policy selection."
-intent: forward_validation
-requirement_set: production_like
-settings_profile: production_like
-markets: ["CL", "ES", "ZN"]
-years: [2026]
-forbid_feature_selection: true
-forbid_policy_selection: true
-notes:
-- "Use only after features and policy are frozen."
-- "Do not tune from 2026 results."
+  tier_forward_2026:
+    description: "Forward/incomplete-year validation. Do not use for feature or policy selection."
+    intent: forward_validation
+    requirement_set: production_like
+    settings_profile: production_like
+    markets: ["CL", "ES", "ZN"]
+    years: [2026]
+    forbid_feature_selection: true
+    forbid_policy_selection: true
+    notes:
+      - "Use only after features and policy are frozen."
+      - "Do not tune from 2026 results."
 
-all_raw:
-description: "Discovery mode only: process every data/raw/{market}/{year}.parquet file."
-intent: inventory_only
-requirement_set: inventory_only
-settings_profile: smoke
-discovery: true
-forbid_research_use: true
-notes:
-- "Use only to inventory or validate available raw files."
-- "Never use for research gates, feature selection, or final strategy decisions."
+  all_raw:
+    description: "Discovery mode only: process every data/raw/{market}/{year}.parquet file."
+    intent: inventory_only
+    requirement_set: inventory_only
+    settings_profile: smoke
+    discovery: true
+    forbid_research_use: true
+    notes:
+      - "Use only to inventory or validate available raw files."
+      - "Never use for research gates, feature selection, or final strategy decisions."
 
 aliases:
-tier_0: tier_0_smoke
-tier_1: tier_1_core_recent
-tier_1_core: tier_1_core_recent
-tier_1_CL_ES_ZN: tier_1_core_recent
-tier_1_recent: tier_1_core_recent
-tier_1_long: tier_1_core_long
-tier_2: tier_2_liquid_recent
-tier_2_recent: tier_2_liquid_recent
-tier_2_long: tier_2_liquid_long
-tier_3: tier_3_full_long
-tier_3_full: tier_3_full_long
-forward_2026: tier_forward_2026
+  tier_0: tier_0_smoke
+  tier_1: tier_1_core_recent
+  tier_1_core: tier_1_core_recent
+  tier_1_CL_ES_ZN: tier_1_core_recent
+  tier_1_recent: tier_1_core_recent
+  tier_1_long: tier_1_core_long
+  tier_2: tier_2_liquid_recent
+  tier_2_recent: tier_2_liquid_recent
+  tier_2_long: tier_2_liquid_long
+  tier_3: tier_3_full_long
+  tier_3_full: tier_3_full_long
+  forward_2026: tier_forward_2026
