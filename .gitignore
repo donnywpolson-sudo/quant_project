@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.pytest_cache/
+
+data/
+reports/
+logs/
+models/
+artifacts/
+
+*.parquet
+*.dbn
+*.zst
+*.csv
+*.jsonl
