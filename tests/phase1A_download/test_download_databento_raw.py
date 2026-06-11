@@ -347,8 +347,29 @@ def test_resolve_databento_api_key_uses_project_databento_env(
         "scripts.phase1A_download.download_databento_raw.API_KEY_FILE",
         key_file,
     )
+    monkeypatch.setattr(
+        "scripts.phase1A_download.download_databento_raw.API_KEY_FILES",
+        [key_file],
+    )
 
     assert resolve_databento_api_key() == "db-file-test"
+
+
+def test_resolve_databento_api_key_prefers_secrets_databento_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_key_file = tmp_path / "databento.env"
+    secrets_key_file = tmp_path / "secrets" / "databento.env"
+    root_key_file.write_text("DATABENTO_API_KEY=db-root-test\n", encoding="utf-8")
+    secrets_key_file.parent.mkdir(parents=True)
+    secrets_key_file.write_text("DATABENTO_API_KEY=db-secrets-test\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.phase1A_download.download_databento_raw.API_KEY_FILES",
+        [secrets_key_file, root_key_file],
+    )
+
+    assert resolve_databento_api_key() == "db-secrets-test"
 
 
 def test_condition_is_degraded_classifies_quality_status() -> None:

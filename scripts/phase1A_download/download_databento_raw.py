@@ -27,7 +27,9 @@ import pandas as pd
 
 
 API_KEY_NAME = "DATABENTO_API_KEY"
-API_KEY_FILE = Path(__file__).resolve().parents[2] / "databento.env"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+API_KEY_FILE = PROJECT_ROOT / "databento.env"
+API_KEY_FILES = [PROJECT_ROOT / "secrets" / "databento.env", API_KEY_FILE]
 CME_DATASET = "GLBX.MDP3"
 ALLOWED_DATASETS = {CME_DATASET}
 SCHEMA = "ohlcv-1m"
@@ -465,14 +467,18 @@ def load_databento_api_key_from_file(path: Path) -> str:
 
 
 def resolve_databento_api_key() -> str:
-    return load_databento_api_key_from_file(API_KEY_FILE)
+    for path in API_KEY_FILES:
+        key = load_databento_api_key_from_file(path)
+        if key:
+            return key
+    return ""
 
 
 def get_client() -> DatabentoClient:
     key = resolve_databento_api_key()
     if not key:
         raise SystemExit(
-            f"Set {API_KEY_NAME} in {API_KEY_FILE.name} at the project root."
+            f"Set {API_KEY_NAME} in secrets/databento.env or {API_KEY_FILE.name} at the project root."
         )
     import databento as db
 
