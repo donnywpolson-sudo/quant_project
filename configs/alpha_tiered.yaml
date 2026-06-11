@@ -41,6 +41,8 @@ defaults:
     - tier_2_liquid_recent
     - tier_2_liquid_long
     - tier_3_full_long
+    - target_28_recent
+    - target_28_long
     - tier_forward_2026
 
 profile_defaults:
@@ -234,6 +236,90 @@ profiles:
       - "Do not use until tier_1 and tier_2 gates are honest."
       - "Every market must have tick, point value, session, cost, and data-quality configs."
 
+  target_28_recent:
+    description: "Exact TARGET_28 production-like research universe on recent data."
+    intent: target_28_recent_research
+    requirement_set: production_like
+    settings_profile: recent_research
+    markets: ["6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "CL", "NG", "RB", "HO", "ES", "NQ", "RTY", "YM", "GC", "SI", "HG", "SR3", "ZN", "ZB", "ZC", "ZS", "ZW", "LE", "HE", "VX"]
+    years: [2023, 2024, 2025]
+    requires_all_market_configs: true
+    requires_cost_configs: true
+    market_families:
+      6A: fx
+      6B: fx
+      6C: fx
+      6E: fx
+      6J: fx
+      6M: fx
+      6N: fx
+      6S: fx
+      CL: energy
+      NG: energy
+      RB: energy
+      HO: energy
+      ES: equity_index
+      NQ: equity_index
+      RTY: equity_index
+      YM: equity_index
+      GC: metals
+      SI: metals
+      HG: metals
+      SR3: rates
+      ZN: rates
+      ZB: rates
+      ZC: ag_livestock
+      ZS: ag_livestock
+      ZW: ag_livestock
+      LE: ag_livestock
+      HE: ag_livestock
+      VX: volatility
+    notes:
+      - "Exact 28-market target only."
+      - "Raw downloads may be incomplete; coverage gate must report missing files."
+
+  target_28_long:
+    description: "Exact TARGET_28 production-like research universe over long history."
+    intent: target_28_long_research
+    requirement_set: production_like
+    settings_profile: long_research
+    markets: ["6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "CL", "NG", "RB", "HO", "ES", "NQ", "RTY", "YM", "GC", "SI", "HG", "SR3", "ZN", "ZB", "ZC", "ZS", "ZW", "LE", "HE", "VX"]
+    years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+    requires_all_market_configs: true
+    requires_cost_configs: true
+    market_families:
+      6A: fx
+      6B: fx
+      6C: fx
+      6E: fx
+      6J: fx
+      6M: fx
+      6N: fx
+      6S: fx
+      CL: energy
+      NG: energy
+      RB: energy
+      HO: energy
+      ES: equity_index
+      NQ: equity_index
+      RTY: equity_index
+      YM: equity_index
+      GC: metals
+      SI: metals
+      HG: metals
+      SR3: rates
+      ZN: rates
+      ZB: rates
+      ZC: ag_livestock
+      ZS: ag_livestock
+      ZW: ag_livestock
+      LE: ag_livestock
+      HE: ag_livestock
+      VX: volatility
+    notes:
+      - "Exact 28-market target only."
+      - "Use only after recent TARGET_28 coverage passes."
+
   tier_forward_2026:
     description: "Forward/incomplete-year validation. Do not use for feature or policy selection."
     intent: forward_validation
@@ -270,4 +356,7 @@ aliases:
   tier_2_long: tier_2_liquid_long
   tier_3: tier_3_full_long
   tier_3_full: tier_3_full_long
+  target_28: target_28_recent
+  target_28_recent: target_28_recent
+  target_28_long: target_28_long
   forward_2026: tier_forward_2026

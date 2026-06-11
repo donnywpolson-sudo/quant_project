@@ -6,13 +6,70 @@ session_templates:
     holidays: []
     closed_dates: []
     early_closes: {}
+  cfe_17_16_ct:
+    timezone: America/Chicago
+    regular_open: "17:00"
+    regular_close: "16:00"
+    holidays: []
+    closed_dates: []
+    early_closes: {}
 
 markets:
   default:
     session_template: cme_globex_17_16_ct
+  6A:
+    session_template: cme_globex_17_16_ct
+  6B:
+    session_template: cme_globex_17_16_ct
+  6C:
+    session_template: cme_globex_17_16_ct
+  6E:
+    session_template: cme_globex_17_16_ct
+  6J:
+    session_template: cme_globex_17_16_ct
+  6M:
+    session_template: cme_globex_17_16_ct
+  6N:
+    session_template: cme_globex_17_16_ct
+  6S:
+    session_template: cme_globex_17_16_ct
   CL:
+    session_template: cme_globex_17_16_ct
+  NG:
+    session_template: cme_globex_17_16_ct
+  RB:
+    session_template: cme_globex_17_16_ct
+  HO:
     session_template: cme_globex_17_16_ct
   ES:
     session_template: cme_globex_17_16_ct
+  NQ:
+    session_template: cme_globex_17_16_ct
+  RTY:
+    session_template: cme_globex_17_16_ct
+  YM:
+    session_template: cme_globex_17_16_ct
+  GC:
+    session_template: cme_globex_17_16_ct
+  SI:
+    session_template: cme_globex_17_16_ct
+  HG:
+    session_template: cme_globex_17_16_ct
+  SR3:
+    session_template: cme_globex_17_16_ct
   ZN:
     session_template: cme_globex_17_16_ct
+  ZB:
+    session_template: cme_globex_17_16_ct
+  ZC:
+    session_template: cme_globex_17_16_ct
+  ZS:
+    session_template: cme_globex_17_16_ct
+  ZW:
+    session_template: cme_globex_17_16_ct
+  LE:
+    session_template: cme_globex_17_16_ct
+  HE:
+    session_template: cme_globex_17_16_ct
+  VX:
+    session_template: cfe_17_16_ct
