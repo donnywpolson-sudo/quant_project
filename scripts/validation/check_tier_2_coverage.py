@@ -39,16 +39,9 @@ TIER_2_UNIVERSE = [
     "ZW",
     "LE",
     "HE",
-    "VX",
 ]
 
 EXCLUDED = [
-    "MES",
-    "MNQ",
-    "MYM",
-    "M2K",
-    "MCL",
-    "MGC",
     "E7",
     "J7",
     "ZT",
@@ -59,7 +52,6 @@ EXCLUDED = [
     "QI",
     "PA",
     "PL",
-    "VXM",
 ]
 
 REQUIRED_COST_KEYS = [
@@ -118,8 +110,8 @@ def check_profile(config: dict[str, Any], requested_profile: str) -> tuple[dict[
     markets = [str(item) for item in profile.get("markets", [])]
     if markets != TIER_2_UNIVERSE:
         errors.append("profile markets do not exactly match tier-2 universe order and membership")
-    if len(markets) != 28 or len(set(markets)) != 28:
-        errors.append("profile markets must contain exactly 28 unique markets")
+    if len(markets) != 27 or len(set(markets)) != 27:
+        errors.append("profile markets must contain exactly 27 unique markets")
 
     excluded_present = sorted(set(markets) & set(EXCLUDED))
     if excluded_present:

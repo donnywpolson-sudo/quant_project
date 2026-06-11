@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.phase2_causal_base.build_causal_base_data import (
     OUTPUT_COLUMNS,
     discover_raw_inputs,
+    load_causal_base_config,
     process_file,
     resolve_profile_inputs,
     write_reports,
@@ -59,6 +60,50 @@ def _write_profile_config(path: Path, *, synthetic_pct: float = 2.0, degraded_pc
     )
 
 
+def _write_profile_defaults_config(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "defaults:",
+                "  years: [2024]",
+                "  max_synthetic_gap_minutes: 77",
+                "  require_roll_metadata_for_profiles: [tier_1_core_recent, tier_2_forward_2026]",
+                "profile_defaults:",
+                "  smoke:",
+                "    max_synthetic_rows_pct: 5.0",
+                "    max_degraded_rows_pct: 5.0",
+                "    max_roll_window_rows_pct: 2.0",
+                "  recent_research:",
+                "    max_synthetic_rows_pct: 2.0",
+                "    max_degraded_rows_pct: 1.0",
+                "    max_roll_window_rows_pct: 1.0",
+                "  production_like:",
+                "    max_synthetic_rows_pct: 1.0",
+                "    max_degraded_rows_pct: 0.5",
+                "    max_roll_window_rows_pct: 1.0",
+                "profiles:",
+                "  tier_0_smoke:",
+                "    settings_profile: smoke",
+                "    markets: [ES]",
+                "    years: [2024]",
+                "  tier_1_core_recent:",
+                "    settings_profile: recent_research",
+                "    markets: [CL, ES, ZN]",
+                "    years: [2024]",
+                "  tier_2_forward_2026:",
+                "    settings_profile: production_like",
+                "    markets: [ES]",
+                "    years: [2026]",
+                "aliases:",
+                "  tier_1: tier_1_core_recent",
+                "  tier_2_forward: tier_2_forward_2026",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _write_session_config(
     path: Path,
     *,
@@ -95,6 +140,42 @@ def _write_session_config(
         ),
         encoding="utf-8",
     )
+
+
+def test_causal_base_config_uses_smoke_profile_thresholds(tmp_path: Path) -> None:
+    profile_config = tmp_path / "configs" / "alpha_tiered.yaml"
+    _write_profile_defaults_config(profile_config)
+
+    config = load_causal_base_config(profile_config, "tier_0_smoke")
+
+    assert config.max_synthetic_rows_pct == 5.0
+    assert config.max_degraded_rows_pct == 5.0
+    assert config.max_roll_window_rows_pct == 2.0
+    assert config.max_synthetic_gap_minutes == 77
+
+
+def test_causal_base_config_resolves_alias_before_threshold_lookup(tmp_path: Path) -> None:
+    profile_config = tmp_path / "configs" / "alpha_tiered.yaml"
+    _write_profile_defaults_config(profile_config)
+
+    config = load_causal_base_config(profile_config, "tier_1")
+    direct_config = load_causal_base_config(profile_config, "tier_1_core_recent")
+
+    assert config.max_synthetic_rows_pct == 2.0
+    assert config.max_degraded_rows_pct == 1.0
+    assert config.max_roll_window_rows_pct == 1.0
+    assert direct_config == config
+
+
+def test_causal_base_config_uses_forward_production_like_thresholds(tmp_path: Path) -> None:
+    profile_config = tmp_path / "configs" / "alpha_tiered.yaml"
+    _write_profile_defaults_config(profile_config)
+
+    config = load_causal_base_config(profile_config, "tier_2_forward")
+
+    assert config.max_synthetic_rows_pct == 1.0
+    assert config.max_degraded_rows_pct == 0.5
+    assert config.max_roll_window_rows_pct == 1.0
 
 
 def test_causal_base_schema_synthetic_and_source_lineage(tmp_path: Path) -> None:
@@ -320,6 +401,32 @@ def test_reports_are_written(tmp_path: Path) -> None:
     manifest = json.loads((reports_root / "causal_base_manifest.json").read_text())
     validation = json.loads((reports_root / "causal_base_validation.json").read_text())
     assert (reports_root / "causal_base_validation.csv").exists()
+    provenance_keys = {
+        "generated_at",
+        "git_commit",
+        "script_path",
+        "script_hash",
+        "config_hash",
+        "input_file_hashes",
+        "output_file_hashes",
+        "profile",
+        "markets",
+        "years",
+        "warning_count",
+        "failure_count",
+        "failures",
+    }
+    assert provenance_keys <= set(manifest)
+    assert provenance_keys <= set(validation)
+    assert manifest["input_file_hashes"][result.input_path] == result.source_file_hash
+    output_hash = manifest["output_file_hashes"][result.output_path]
+    assert isinstance(output_hash, str)
+    assert len(output_hash) == 64
+    assert manifest["warning_count"] == result.to_dict()["warning_count"]
+    assert manifest["failure_count"] == 0
+    assert manifest["failures"] == []
+    assert manifest["markets"] == ["ES"]
+    assert manifest["years"] == [2024]
     assert manifest["stage"] == "causal_base"
     assert manifest["outputs"][0]["raw_schema_variant"] == "databento_full"
     assert manifest["outputs"][0]["timestamp_source"] == "ts_event_column"

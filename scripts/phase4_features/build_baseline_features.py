@@ -310,6 +310,24 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def file_hash_or_missing(path: Path) -> str:
+    return file_sha256(path) if path.exists() else "missing"
+
+
+def file_hash_map(paths: Iterable[Path]) -> dict[str, str]:
+    return {relative_path(path): file_hash_or_missing(path) for path in paths}
+
+
+def config_hash(paths: Iterable[Path]) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(paths, key=lambda item: item.as_posix()):
+        digest.update(relative_path(path).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_hash_or_missing(path).encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def git_commit() -> str | None:
     try:
         return subprocess.check_output(
@@ -472,8 +490,8 @@ def lag(series: pd.Series, segment: pd.Series, periods: int) -> pd.Series:
 def ret_over(close: pd.Series, valid: pd.Series, segment: pd.Series, periods: int) -> pd.Series:
     safe_close = close.where(valid)
     prev = lag(safe_close, segment, periods)
-    current_valid = valid & prev.notna()
-    return ((safe_close / prev) - 1.0).where(current_valid)
+    window_valid = valid_window_mask(valid, segment, periods + 1)
+    return ((safe_close / prev) - 1.0).where(window_valid & prev.notna())
 
 
 def valid_window_mask(valid: pd.Series, segment: pd.Series, window: int) -> pd.Series:
@@ -1214,6 +1232,8 @@ def write_reports(
     profile: str,
     output_root: Path,
     reports_root: Path,
+    profile_config: Path = DEFAULT_PROFILE_CONFIG,
+    costs_config: Path = DEFAULT_COSTS_CONFIG,
 ) -> None:
     reports_root.mkdir(parents=True, exist_ok=True)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1230,11 +1250,17 @@ def write_reports(
     corr_pairs = high_correlation_report(results, FEATURE_COLS, reports_root)
     failures = [failure for result in results for failure in result.failures]
     warnings = [warning for result in results for warning in result.warnings]
+    input_hashes = file_hash_map(Path(result.input_path) for result in results)
+    output_hashes = file_hash_map(Path(result.output_path) for result in results)
+    config_digest = config_hash([profile_config, costs_config])
     manifest = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "git_commit": git_commit(),
         "script_path": relative_path(Path(__file__)),
         "script_hash": file_sha256(Path(__file__)),
+        "config_hash": config_digest,
+        "input_file_hashes": input_hashes,
+        "output_file_hashes": output_hashes,
         "profile": profile,
         "markets": sorted({result.market for result in results}),
         "years": sorted({result.year for result in results}),
@@ -1248,6 +1274,13 @@ def write_reports(
         "registry": registry,
     }
     report = {
+        "generated_at": manifest["generated_at"],
+        "git_commit": manifest["git_commit"],
+        "script_path": manifest["script_path"],
+        "script_hash": manifest["script_hash"],
+        "config_hash": config_digest,
+        "input_file_hashes": input_hashes,
+        "output_file_hashes": output_hashes,
         "profile": profile,
         "status": "FAIL" if failures else ("WARN" if warnings else "PASS"),
         "summary": {
@@ -1306,7 +1339,14 @@ def main() -> int:
             f"training_valid={result.training_row_valid_rows} warnings={len(result.warnings)} "
             f"failures={len(result.failures)}"
         )
-    write_reports(results, profile=args.profile, output_root=output_root, reports_root=reports_root)
+    write_reports(
+        results,
+        profile=args.profile,
+        output_root=output_root,
+        reports_root=reports_root,
+        profile_config=Path(args.profile_config),
+        costs_config=Path(args.costs_config),
+    )
     return 1 if any(result.status == "FAIL" for result in results) else 0
 
 

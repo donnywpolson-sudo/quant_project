@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -28,6 +31,7 @@ ENTRY_OFFSET_BARS = 1
 EXIT_OFFSET_BARS = 16
 REGIME_OFFSET_BARS = 31
 ATR_LOOKBACK_BARS = 60
+LABEL_SEMANTICS_ID = "phase3_labels_v1_next_1m_open_to_15m_open"
 
 REQUIRED_INPUT_COLUMNS = [
     "ts",
@@ -77,7 +81,13 @@ REGIME_LABEL_COLUMNS = [
     "revert_to_session_mid_30m",
 ]
 
-LABEL_COLUMNS = GENERIC_LABEL_COLUMNS + REGIME_LABEL_COLUMNS
+LABEL_PROVENANCE_COLUMNS = [
+    "label_semantics",
+    "cost_source",
+    "cost_provisional",
+]
+
+LABEL_COLUMNS = GENERIC_LABEL_COLUMNS + REGIME_LABEL_COLUMNS + LABEL_PROVENANCE_COLUMNS
 
 DEFAULT_MARKET_CONFIGS = {
     "CL": {
@@ -189,6 +199,50 @@ def relative_path(path: Path) -> str:
         return path.relative_to(Path.cwd()).as_posix()
     except ValueError:
         return path.as_posix()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def hash_optional_file(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    return sha256_file(path)
+
+
+def config_hash(paths: Iterable[Path]) -> str:
+    payload = {
+        relative_path(path): hash_optional_file(path)
+        for path in paths
+    }
+    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def current_git_commit() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path.cwd(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return "unknown"
+    commit = result.stdout.strip()
+    if result.returncode != 0 or not commit:
+        return "unknown"
+    return commit
+
+
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def discover_inputs(input_root: Path) -> list[tuple[str, int, Path]]:
@@ -662,6 +716,9 @@ def add_labels(df: pd.DataFrame, config: MarketConfig) -> pd.DataFrame:
     df["trend_danger_down_30m"] = trend_danger_down.fillna(False).astype(bool)
     df["revert_to_vwap_30m"] = revert_to_vwap.fillna(False).astype(bool)
     df["revert_to_session_mid_30m"] = revert_to_session_mid.fillna(False).astype(bool)
+    df["label_semantics"] = LABEL_SEMANTICS_ID
+    df["cost_source"] = config.cost_source
+    df["cost_provisional"] = bool(config.provisional)
 
     return df
 
@@ -744,9 +801,47 @@ def _aggregate_invalid_counts(rows: list[dict[str, object]]) -> dict[str, int]:
     return dict(sorted(aggregate.items()))
 
 
-def write_reports(results: Iterable[LabelResult], reports_root: Path, profile: str) -> None:
+def write_reports(
+    results: Iterable[LabelResult],
+    reports_root: Path,
+    profile: str,
+    *,
+    profile_config_path: Path = DEFAULT_PROFILE_CONFIG,
+    costs_config_path: Path = Path("configs/costs.yaml"),
+) -> None:
     reports_root.mkdir(parents=True, exist_ok=True)
     rows = [result.to_dict() for result in results]
+    run_failures = [
+        {
+            "market": row["market"],
+            "year": row["year"],
+            "failures": row["failures"],
+        }
+        for row in rows
+        if row["failures"]
+    ]
+    script_path = Path(__file__).resolve()
+    provenance = {
+        "generated_at": utc_timestamp(),
+        "git_commit": current_git_commit(),
+        "script_path": relative_path(script_path),
+        "script_hash": sha256_file(script_path),
+        "config_hash": config_hash([profile_config_path, costs_config_path]),
+        "input_file_hashes": {
+            str(row["input_path"]): hash_optional_file(Path(str(row["input_path"])))
+            for row in rows
+        },
+        "output_file_hashes": {
+            str(row["output_path"]): hash_optional_file(Path(str(row["output_path"])))
+            for row in rows
+        },
+        "profile": profile,
+        "markets": sorted({str(row["market"]) for row in rows}),
+        "years": sorted({int(row["year"]) for row in rows}),
+        "warning_count": int(sum(row["warning_count"] for row in rows)),
+        "failure_count": int(sum(row["failure_count"] for row in rows)),
+        "failures": run_failures,
+    }
     status = (
         "FAIL"
         if any(row["status"] == "FAIL" for row in rows)
@@ -781,7 +876,7 @@ def write_reports(results: Iterable[LabelResult], reports_root: Path, profile: s
     }
 
     report = {
-        "profile": profile,
+        **provenance,
         "stage": "labels",
         "status": status,
         "label_semantics": label_semantics,
@@ -789,7 +884,7 @@ def write_reports(results: Iterable[LabelResult], reports_root: Path, profile: s
         "summary": summary,
     }
     manifest = {
-        "profile": profile,
+        **provenance,
         "stage": "labels",
         "status": status,
         "label_semantics": label_semantics,
@@ -864,7 +959,13 @@ def main() -> int:
             f"warnings={len(result.warnings)} failures={len(result.failures)}"
         )
 
-    write_reports(results, reports_root, args.profile)
+    write_reports(
+        results,
+        reports_root,
+        args.profile,
+        profile_config_path=profile_config,
+        costs_config_path=costs_config,
+    )
     return 1 if any(result.failures for result in results) else 0
 
 

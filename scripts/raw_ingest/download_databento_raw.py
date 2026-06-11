@@ -27,7 +27,7 @@ import pandas as pd
 API_KEY_NAME = "DATABENTO_API_KEY"
 API_KEY_FILE = Path(__file__).resolve().parents[2] / "databento.env"
 CME_DATASET = "GLBX.MDP3"
-CFE_DATASET = "XCBF.PITCH"
+ALLOWED_DATASETS = {CME_DATASET}
 SCHEMA = "ohlcv-1m"
 STYPE_IN = "continuous"
 STYPE_OUT = "instrument_id"
@@ -100,12 +100,6 @@ EXTENDED_CME = sorted(
             "6S",
             "E7",
             "J7",
-            "M2K",
-            "MCL",
-            "MES",
-            "MGC",
-            "MNQ",
-            "MYM",
             "PA",
             "PL",
             "QI",
@@ -119,8 +113,7 @@ EXTENDED_CME = sorted(
         ]
     )
 )
-
-CFE_VIX = ["VX", "VXM"]
+ALLOWED_PRODUCTS = set(EXTENDED_CME)
 
 REQUIRED_OUTPUT_COLUMNS = {
     "ts_event",
@@ -220,17 +213,26 @@ def parse_symbols(value: str | None, universe: str) -> list[str]:
         return CURRENT_20
     if universe == "extended_cme":
         return EXTENDED_CME
-    if universe == "extended_cme_vix":
-        return EXTENDED_CME + CFE_VIX
-    if universe == "vix":
-        return CFE_VIX
     raise ValueError("--symbols is required when --universe custom")
 
 
 def dataset_for_product(product: str) -> str:
-    if product in CFE_VIX:
-        return CFE_DATASET
     return CME_DATASET
+
+
+def validate_allowed_dataset(dataset: str) -> str:
+    if dataset not in ALLOWED_DATASETS:
+        allowed = ", ".join(sorted(ALLOWED_DATASETS))
+        raise ValueError(f"dataset {dataset!r} is not allowed; allowed datasets: {allowed}")
+    return dataset
+
+
+def validate_allowed_products(products: Iterable[str]) -> None:
+    blocked = sorted({product for product in products if product not in ALLOWED_PRODUCTS})
+    if blocked:
+        raise ValueError(
+            f"products outside the allowed {CME_DATASET} futures universe: {','.join(blocked)}"
+        )
 
 
 def symbol_for_product(product: str, stype_in: str) -> str:
@@ -340,9 +342,14 @@ def iter_range_tasks(
 ) -> list[DownloadTask]:
     final_end = pd.Timestamp(end).date()
     requested_start = pd.Timestamp(start).date()
+    product_list = list(products)
+    validate_allowed_products(product_list)
+    if dataset is not None:
+        validate_allowed_dataset(dataset)
     tasks: list[DownloadTask] = []
-    for product in products:
+    for product in product_list:
         task_dataset = dataset or dataset_for_product(product)
+        validate_allowed_dataset(task_dataset)
         dataset_start = DATASET_AVAILABLE_START.get(task_dataset, requested_start)
         range_start = max(requested_start, dataset_start)
         if range_start >= final_end:
@@ -388,9 +395,12 @@ def iter_year_tasks(
     output_root: Path,
 ) -> list[DownloadTask]:
     final_end = pd.Timestamp(end_date).date()
+    product_list = list(products)
+    validate_allowed_products(product_list)
     tasks: list[DownloadTask] = []
-    for product in products:
+    for product in product_list:
         dataset = dataset_for_product(product)
+        validate_allowed_dataset(dataset)
         dataset_start = DATASET_AVAILABLE_START.get(dataset, date(start_year, 1, 1))
         for year in range(start_year, end_year + 1):
             start = max(date(year, 1, 1), dataset_start)
@@ -1550,11 +1560,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--universe",
-        choices=["current20", "extended_cme", "extended_cme_vix", "vix", "custom"],
-        default="extended_cme_vix",
+        choices=["current20", "extended_cme", "custom"],
+        default="extended_cme",
     )
     parser.add_argument("--symbols", "--markets", dest="symbols", help="Comma-separated product roots, e.g. ES,NQ,CL")
-    parser.add_argument("--dataset", help="Override dataset for every requested market, e.g. GLBX.MDP3")
+    parser.add_argument("--dataset", help=f"Override dataset for every requested market; only {CME_DATASET} is allowed")
     parser.add_argument("--schema", default=SCHEMA)
     parser.add_argument("--stype-in", default=STYPE_IN, help="Default continuous. Use parent for symbols like ES.FUT.")
     parser.add_argument("--stype-out", default=STYPE_OUT)
@@ -1599,7 +1609,13 @@ def main() -> int:
         print(f"CONVERT_EXISTING total={len(results)} failed={len(failed)}")
         return 1 if failed else 0
 
-    products = parse_symbols(args.symbols, args.universe)
+    try:
+        products = parse_symbols(args.symbols, args.universe)
+        validate_allowed_products(products)
+        if args.dataset:
+            validate_allowed_dataset(args.dataset)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     start, end = effective_date_range(args)
     raw_format = effective_raw_format(args)
     if args.mode == "stream" and raw_format != "parquet":

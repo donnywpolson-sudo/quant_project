@@ -378,17 +378,3 @@ markets:
     round_turn_cost_dollars: 30.0
     cost_source: provisional_placeholder_he
     provisional: true
-
-  VX:
-    family: volatility
-    tick_size: 0.05
-    tick_value: 50.0
-    point_value: 1000.0
-    min_profit_ticks: 2.0
-    min_stop_ticks: 4.0
-    commission_per_contract_dollars: 0.0
-    slippage_ticks_per_side: 1.5
-    round_turn_cost_ticks: 3.0
-    round_turn_cost_dollars: 150.0
-    cost_source: provisional_placeholder_vx
-    provisional: true

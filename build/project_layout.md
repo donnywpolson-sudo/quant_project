@@ -117,7 +117,7 @@ metadata_optional_test = tests only
 ```
 
 `tier_1` is for proving the machinery on CL/ES/ZN. `tier_2` is the actual
-28-market research universe. `tier_1` results do not prove `tier_2`
+27-market GLBX-only research universe. `tier_1` results do not prove `tier_2`
 performance. Missing tier-2 data should fail stage validation clearly, not
 silently shrink the universe. `all_raw` is inventory only and must not feed
 labels, WFA, gates, or research decisions.
@@ -151,7 +151,6 @@ GC SI HG
 SR3 ZN ZB
 6A 6B 6C 6E 6J 6M 6N 6S
 ZC ZS ZW LE HE
-VX
 ```
 
 Year/profile policy:

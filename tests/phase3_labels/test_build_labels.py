@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.phase3_labels.build_labels import (
     LABEL_COLUMNS,
+    LABEL_SEMANTICS_ID,
     add_labels,
     load_market_config,
     process_file,
@@ -338,8 +339,37 @@ def test_output_schema_and_reports(tmp_path: Path) -> None:
 
     output = pd.read_parquet(output_path)
     assert list(output.columns) == list(input_df.columns) + LABEL_COLUMNS
+    assert output["label_semantics"].eq(LABEL_SEMANTICS_ID).all()
+    assert output["cost_source"].eq("embedded_defaults").all()
+    assert output["cost_provisional"].eq(True).all()
     manifest = json.loads((reports_root / "label_manifest.json").read_text())
     report = json.loads((reports_root / "label_report.json").read_text())
+    provenance_keys = {
+        "generated_at",
+        "git_commit",
+        "script_path",
+        "script_hash",
+        "config_hash",
+        "input_file_hashes",
+        "output_file_hashes",
+        "profile",
+        "markets",
+        "years",
+        "warning_count",
+        "failure_count",
+        "failures",
+    }
+    assert provenance_keys <= set(manifest)
+    assert provenance_keys <= set(report)
+    assert isinstance(manifest["output_file_hashes"][result.output_path], str)
+    assert len(manifest["output_file_hashes"][result.output_path]) == 64
+    assert manifest["input_file_hashes"][result.input_path] is not None
+    assert manifest["profile"] == "tier_1_core"
+    assert manifest["markets"] == ["ES"]
+    assert manifest["years"] == [2024]
+    assert manifest["warning_count"] == len(result.warnings)
+    assert manifest["failure_count"] == len(result.failures)
+    assert manifest["failures"] == []
     assert manifest["stage"] == "labels"
     assert report["summary"]["target_valid_rows"] == result.target_valid_rows
     assert manifest["outputs"][0]["config"]["tick_size"] == 0.25

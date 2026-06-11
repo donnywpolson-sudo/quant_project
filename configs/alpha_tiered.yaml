@@ -167,11 +167,11 @@ profiles:
       - "Long history is for robustness, not faster iteration."
 
   tier_2_universe_recent:
-    description: "Exact 28-market real research universe on recent data."
+    description: "Exact 27-market GLBX-only real research universe on recent data."
     intent: tier_2_universe_recent_research
     requirement_set: production_like
     settings_profile: recent_research
-    markets: ["ES", "NQ", "RTY", "YM", "CL", "NG", "RB", "HO", "GC", "SI", "HG", "SR3", "ZN", "ZB", "6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "ZC", "ZS", "ZW", "LE", "HE", "VX"]
+    markets: ["ES", "NQ", "RTY", "YM", "CL", "NG", "RB", "HO", "GC", "SI", "HG", "SR3", "ZN", "ZB", "6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "ZC", "ZS", "ZW", "LE", "HE"]
     years: [2023, 2024, 2025]
     requires_all_market_configs: true
     requires_cost_configs: true
@@ -203,17 +203,16 @@ profiles:
       ZW: ag_livestock
       LE: ag_livestock
       HE: ag_livestock
-      VX: volatility
     notes:
       - "Main real research universe after tier_1_core_recent passes."
       - "Missing local data must fail stage validation clearly, not shrink the universe."
 
   tier_2_universe_long:
-    description: "Exact 28-market real research universe over long history."
+    description: "Exact 27-market GLBX-only real research universe over long history."
     intent: tier_2_universe_long_research
     requirement_set: production_like
     settings_profile: long_research
-    markets: ["ES", "NQ", "RTY", "YM", "CL", "NG", "RB", "HO", "GC", "SI", "HG", "SR3", "ZN", "ZB", "6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "ZC", "ZS", "ZW", "LE", "HE", "VX"]
+    markets: ["ES", "NQ", "RTY", "YM", "CL", "NG", "RB", "HO", "GC", "SI", "HG", "SR3", "ZN", "ZB", "6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "ZC", "ZS", "ZW", "LE", "HE"]
     years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
     requires_all_market_configs: true
     requires_cost_configs: true
@@ -245,17 +244,16 @@ profiles:
       ZW: ag_livestock
       LE: ag_livestock
       HE: ag_livestock
-      VX: volatility
     notes:
       - "Long-history robustness on the real universe."
       - "Missing local data must fail stage validation clearly, not shrink the universe."
 
   tier_2_forward_2026:
-    description: "Exact 28-market forward/incomplete-year validation only."
+    description: "Exact 27-market GLBX-only forward/incomplete-year validation only."
     intent: tier_2_forward_validation
     requirement_set: production_like
     settings_profile: production_like
-    markets: ["ES", "NQ", "RTY", "YM", "CL", "NG", "RB", "HO", "GC", "SI", "HG", "SR3", "ZN", "ZB", "6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "ZC", "ZS", "ZW", "LE", "HE", "VX"]
+    markets: ["ES", "NQ", "RTY", "YM", "CL", "NG", "RB", "HO", "GC", "SI", "HG", "SR3", "ZN", "ZB", "6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "ZC", "ZS", "ZW", "LE", "HE"]
     years: [2026]
     requires_all_market_configs: true
     requires_cost_configs: true
@@ -289,7 +287,6 @@ profiles:
       ZW: ag_livestock
       LE: ag_livestock
       HE: ag_livestock
-      VX: volatility
     notes:
       - "Use only after features and policy are frozen."
       - "Do not tune, select features, or select policy from 2026 results."

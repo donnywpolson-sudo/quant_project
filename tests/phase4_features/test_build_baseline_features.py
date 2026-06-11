@@ -125,6 +125,16 @@ def test_ret_1_uses_only_completed_prior_bar_and_invalidates_bad_prior() -> None
     assert out.loc[2, "feature_input_valid"] is True or bool(out.loc[2, "feature_input_valid"])
 
 
+def test_multi_bar_returns_require_full_valid_lookback() -> None:
+    df = _frame(30)
+    df.loc[3, "is_synthetic"] = True
+    out = add_base_market_features(df, tick_size=0.25)
+    assert pd.isna(out.loc[5, "feature_ret_5"])
+    assert pd.isna(out.loc[10, "feature_ret_10"])
+    assert pd.isna(out.loc[20, "feature_ret_20"])
+    assert pd.notna(out.loc[9, "feature_ret_5"])
+
+
 def test_rolling_features_do_not_cross_session_or_invalid_rows() -> None:
     df = _frame(35)
     df.loc[10, "causal_valid"] = False
@@ -216,6 +226,16 @@ def test_5m_15m_60m_features_use_completed_rows_only() -> None:
     assert pd.isna(out.loc[59, "feature_60m_trend_slope"])
 
 
+def test_higher_timeframe_returns_require_full_valid_lookback() -> None:
+    df = _frame(130)
+    df.loc[10, "roll_window_flag"] = True
+    out = add_base_market_features(df, tick_size=0.25)
+    assert pd.isna(out.loc[15, "feature_5m_ret_3"])
+    assert pd.isna(out.loc[60, "feature_15m_ret_4"])
+    assert pd.notna(out.loc[26, "feature_5m_ret_3"])
+    assert pd.notna(out.loc[71, "feature_15m_ret_4"])
+
+
 def test_intermarket_features_use_exact_timestamps_and_no_self_target_columns(tmp_path: Path) -> None:
     root = tmp_path / "labeled"
     for market in ("CL", "ES", "ZN"):
@@ -232,6 +252,22 @@ def test_intermarket_features_use_exact_timestamps_and_no_self_target_columns(tm
     assert missing["feature_rel_ret_vs_ES_15"] == 1.0
     assert "target_valid" not in [col for col in out.columns if col.startswith("feature_")]
     assert out["feature_rel_ret_vs_CL_15"].isna().all()
+
+
+def test_intermarket_returns_require_other_market_full_valid_lookback(tmp_path: Path) -> None:
+    root = tmp_path / "labeled"
+    for market in ("CL", "ES", "ZN"):
+        df = _frame(80, market=market)
+        if market == "ES":
+            df.loc[10, "is_synthetic"] = True
+        path = root / market / "2024.parquet"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(path, index=False)
+
+    base = add_base_market_features(_frame(80, market="CL"), tick_size=0.01)
+    out, _ = add_intermarket_features(base, market="CL", year=2024, input_root=root)
+    assert pd.isna(out.loc[15, "feature_rel_ret_vs_ES_15"])
+    assert pd.notna(out.loc[26, "feature_rel_ret_vs_ES_15"])
 
 
 def test_tier1_risk_score_is_usable_without_zero_filling_self_market(tmp_path: Path) -> None:
@@ -289,3 +325,11 @@ def test_process_file_writes_matrix_registries_and_reports(tmp_path: Path) -> No
     assert (reports_root / "feature_correlation_report.csv").exists()
     registry = json.loads((reports_root / "feature_registry.json").read_text())
     assert registry["feature_families"]["feature_ret_1"] == "baseline_ohlcv"
+    manifest = json.loads((reports_root / "baseline_feature_manifest.json").read_text())
+    report = json.loads((reports_root / "baseline_feature_report.json").read_text())
+    for payload in (manifest, report):
+        assert payload["config_hash"]
+        assert payload["input_file_hashes"][input_path.as_posix()] != "missing"
+        assert payload["output_file_hashes"][
+            (output_root / "ES" / "2024.parquet").as_posix()
+        ] != "missing"

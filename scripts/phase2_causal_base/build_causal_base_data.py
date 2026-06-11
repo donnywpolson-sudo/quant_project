@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -266,6 +268,33 @@ def relative_source_path(path: Path) -> str:
         return path.as_posix()
 
 
+def hash_optional_file(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    return sha256_file(path)
+
+
+def current_git_commit() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path.cwd(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return "unknown"
+    commit = result.stdout.strip()
+    if result.returncode != 0 or not commit:
+        return "unknown"
+    return commit
+
+
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _read_yaml(path: Path) -> dict[str, object]:
     if not path.exists():
         return {}
@@ -275,22 +304,41 @@ def _read_yaml(path: Path) -> dict[str, object]:
     return payload
 
 
-def load_causal_base_config(profile_config_path: Path = DEFAULT_PROFILE_CONFIG) -> CausalBaseConfig:
+def _as_mapping(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return {str(k): v for k, v in value.items()}
+    return {}
+
+
+def load_causal_base_config(
+    profile_config_path: Path = DEFAULT_PROFILE_CONFIG,
+    profile: str = DEFAULT_PROFILE,
+) -> CausalBaseConfig:
     payload = _read_yaml(profile_config_path)
-    defaults = payload.get("defaults", {})
-    if not isinstance(defaults, dict):
-        defaults = {}
-    causal_base = payload.get("causal_base", {})
-    if not isinstance(causal_base, dict):
-        causal_base = {}
+    defaults = _as_mapping(payload.get("defaults", {}))
+    causal_base = _as_mapping(payload.get("causal_base", {}))
+    aliases = _as_mapping(payload.get("aliases", {}))
+    resolved_profile = resolve_profile_name(profile, {str(k): str(v) for k, v in aliases.items()})
+    profiles = _as_mapping(payload.get("profiles", {}))
+    profile_config = _as_mapping(profiles.get(resolved_profile, {}))
+    settings_profile = str(profile_config.get("settings_profile", ""))
+    profile_defaults = _as_mapping(payload.get("profile_defaults", {}))
+    settings_defaults = _as_mapping(profile_defaults.get(settings_profile, {}))
+
+    def get_value(name: str, default: object) -> object:
+        if name in causal_base:
+            return causal_base[name]
+        if name in defaults:
+            return defaults[name]
+        if name in settings_defaults:
+            return settings_defaults[name]
+        return default
 
     def get_float(name: str, default: float) -> float:
-        value = causal_base.get(name, defaults.get(name, default))
-        return float(value)
+        return float(get_value(name, default))
 
     def get_int(name: str, default: int) -> int:
-        value = causal_base.get(name, defaults.get(name, default))
-        return int(value)
+        return int(get_value(name, default))
 
     required = causal_base.get(
         "require_roll_metadata_for_profiles",
@@ -970,7 +1018,7 @@ def process_file(
     allow_hardcoded_calendar: bool = False,
 ) -> ValidationResult:
     market, year = infer_market_year(input_path)
-    config = load_causal_base_config(profile_config_path)
+    config = load_causal_base_config(profile_config_path, profile)
     _, _, aliases, _ = load_profile_map(profile_config_path)
     resolved_profile = resolve_profile_name(profile, aliases)
     raw_schema_policy = raw_schema_policy_for_profile(resolved_profile)
@@ -1230,13 +1278,49 @@ def process_file(
     return result
 
 
-def write_reports(results: Iterable[ValidationResult], reports_root: Path, profile: str) -> None:
+def write_reports(
+    results: Iterable[ValidationResult],
+    reports_root: Path,
+    profile: str,
+    profile_config_path: Path = DEFAULT_PROFILE_CONFIG,
+) -> None:
     reports_root.mkdir(parents=True, exist_ok=True)
     rows = [result.to_dict() for result in results]
     csv_rows = [result.to_csv_row() for result in results]
+    script_path = Path(__file__).resolve()
+    output_file_hashes = {
+        str(row["output_path"]): hash_optional_file(Path(str(row["output_path"])))
+        for row in rows
+    }
+    run_failures = [
+        {
+            "market": row["market"],
+            "year": row["year"],
+            "failures": row["failures"],
+        }
+        for row in rows
+        if row["failures"]
+    ]
+    provenance = {
+        "generated_at": utc_timestamp(),
+        "git_commit": current_git_commit(),
+        "script_path": relative_source_path(script_path),
+        "script_hash": sha256_file(script_path),
+        "config_hash": hash_optional_file(profile_config_path),
+        "input_file_hashes": {
+            str(row["input_path"]): row["source_file_hash"] for row in rows
+        },
+        "output_file_hashes": output_file_hashes,
+        "profile": profile,
+        "markets": sorted({str(row["market"]) for row in rows}),
+        "years": sorted({int(row["year"]) for row in rows}),
+        "warning_count": int(sum(row["warning_count"] for row in rows)),
+        "failure_count": int(sum(row["failure_count"] for row in rows)),
+        "failures": run_failures,
+    }
 
     validation_json = {
-        "profile": profile,
+        **provenance,
         "stage": "causal_base",
         "status": "FAIL" if any(r["status"] == "FAIL" for r in rows) else "WARN"
         if any(r["status"] == "WARN" for r in rows)
@@ -1276,7 +1360,7 @@ def write_reports(results: Iterable[ValidationResult], reports_root: Path, profi
     }
 
     manifest = {
-        "profile": profile,
+        **provenance,
         "stage": "causal_base",
         "status": validation_json["status"],
         "outputs": [
@@ -1382,7 +1466,7 @@ def main() -> int:
     reports_root = Path(args.reports_root)
     profile_config_path = Path(args.profile_config)
     session_config_path = Path(args.session_config)
-    config = load_causal_base_config(profile_config_path)
+    config = load_causal_base_config(profile_config_path, args.profile)
     inputs = resolve_profile_inputs(args.profile, raw_root, profile_config_path)
 
     results: list[ValidationResult] = []
@@ -1405,7 +1489,7 @@ def main() -> int:
             f"warnings={len(result.warnings)} failures={len(result.failures)}"
         )
 
-    write_reports(results, reports_root, args.profile)
+    write_reports(results, reports_root, args.profile, profile_config_path)
     return 1 if any(result.failures for result in results) else 0
 
 

@@ -94,8 +94,8 @@ def test_tier_2_profiles_match_exact_universe_and_years() -> None:
     for profile_name in TIER_2_PROFILES:
         markets = profiles[profile_name]["markets"]
         assert markets == TIER_2_UNIVERSE
-        assert len(markets) == 28
-        assert len(set(markets)) == 28
+        assert len(markets) == 27
+        assert len(set(markets)) == 27
         assert set(markets).isdisjoint(EXCLUDED)
 
     assert profiles["tier_2_universe_recent"]["years"] == [2023, 2024, 2025]
@@ -183,7 +183,7 @@ def test_coverage_gate_fails_when_one_raw_file_is_missing(tmp_path: Path) -> Non
 
 def test_coverage_gate_fails_if_excluded_market_is_inserted(tmp_path: Path) -> None:
     payload = load_yaml(ROOT / "configs" / "alpha_tiered.yaml")
-    payload["profiles"]["tier_2_universe_recent"]["markets"] = TIER_2_UNIVERSE + ["MES"]
+    payload["profiles"]["tier_2_universe_recent"]["markets"] = TIER_2_UNIVERSE + ["UB"]
     config = tmp_path / "alpha_tiered.yaml"
     config.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     _touch_complete_tree(tmp_path, [2023, 2024, 2025])

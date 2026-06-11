@@ -45,7 +45,7 @@ python -m scripts.raw_ingest.download_databento_raw --symbols ES --start-year 20
 Full L0/OHLCV archive:
 
 ```powershell
-python -m scripts.raw_ingest.download_databento_raw --universe extended_cme_vix --start-year 2010 --end-year 2026 --end-date 2026-06-10
+python -m scripts.raw_ingest.download_databento_raw --universe extended_cme --start-year 2010 --end-year 2026 --end-date 2026-06-10
 ```
 
 The downloader does not replace existing files unless `--overwrite` is passed.
@@ -57,7 +57,7 @@ Operational profiles live in `configs/alpha_tiered.yaml`.
 ```text
 tier_0 = smoke test
 tier_1 = CL/ES/ZN machinery proof set
-tier_2 = exact 28-market real universe
+tier_2 = exact 27-market GLBX-only real universe
 all_raw = inventory only
 metadata_optional_test = unit-test only
 ```

@@ -11,8 +11,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.raw_ingest.download_databento_raw import (
-    CFE_DATASET,
-    CFE_VIX,
     CME_DATASET,
     CURRENT_20,
     EXTENDED_CME,
@@ -213,10 +211,6 @@ def install_fake_databento_store(
 def test_parse_symbols_current_and_extended() -> None:
     assert parse_symbols(None, "current20") == CURRENT_20
     assert "ES" in parse_symbols(None, "extended_cme")
-    assert "MES" in parse_symbols(None, "extended_cme")
-    assert "VX" in parse_symbols(None, "extended_cme_vix")
-    assert "VXM" in parse_symbols(None, "extended_cme_vix")
-    assert parse_symbols(None, "vix") == CFE_VIX
     assert len(EXTENDED_CME) > len(CURRENT_20)
 
 
@@ -234,6 +228,7 @@ def test_default_batch_plan_is_archive_only_not_pipeline_ready() -> None:
     raw_format = effective_raw_format(args)
     output_root = effective_output_root(args)
 
+    assert args.universe == "extended_cme"
     assert args.mode == "batch"
     assert raw_format == "dbn-zstd"
     assert output_role_for_run(args.mode, raw_format, output_root) == "archive_only"
@@ -338,15 +333,13 @@ def test_is_fatal_error_detects_auth_failure() -> None:
     assert is_fatal_error(RuntimeError("422 data_start_before_available_start")) is False
 
 
-def test_dataset_for_product_routes_vix_to_cfe() -> None:
+def test_dataset_for_product_uses_glbx_dataset() -> None:
     assert dataset_for_product("ES") == CME_DATASET
-    assert dataset_for_product("VX") == CFE_DATASET
-    assert dataset_for_product("VXM") == CFE_DATASET
 
 
 def test_iter_year_tasks_clips_final_year_to_end_date(tmp_path: Path) -> None:
     tasks = iter_year_tasks(
-        ["ES", "VX"],
+        ["ES"],
         start_year=2024,
         end_year=2026,
         end_date="2026-06-10",
@@ -357,17 +350,11 @@ def test_iter_year_tasks_clips_final_year_to_end_date(tmp_path: Path) -> None:
         ("ES", 2024, "2024-01-01", "2025-01-01"),
         ("ES", 2025, "2025-01-01", "2026-01-01"),
         ("ES", 2026, "2026-01-01", "2026-06-10"),
-        ("VX", 2024, "2024-01-01", "2025-01-01"),
-        ("VX", 2025, "2025-01-01", "2026-01-01"),
-        ("VX", 2026, "2026-01-01", "2026-06-10"),
     ]
     assert [(task.product, task.dataset) for task in tasks] == [
         ("ES", CME_DATASET),
         ("ES", CME_DATASET),
         ("ES", CME_DATASET),
-        ("VX", CFE_DATASET),
-        ("VX", CFE_DATASET),
-        ("VX", CFE_DATASET),
     ]
     assert [(task.year, task.start, task.end) for task in tasks[:3]] == [
         (2024, "2024-01-01", "2025-01-01"),
@@ -433,7 +420,7 @@ def test_iter_range_tasks_builds_batch_dbn_zstd_jobs_with_parent_symbols(
     tmp_path: Path,
 ) -> None:
     tasks = iter_range_tasks(
-        ["ES", "VX"],
+        ["ES", "NQ"],
         start="2024-01-01",
         end="2024-03-01",
         output_root=tmp_path / "raw_databento",
@@ -454,6 +441,33 @@ def test_iter_range_tasks_builds_batch_dbn_zstd_jobs_with_parent_symbols(
         "ES",
         "2024-01",
     )
+
+
+def test_iter_range_tasks_rejects_non_glbx_dataset(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="dataset 'NOT.GLBX' is not allowed"):
+        iter_range_tasks(
+            ["ES"],
+            start="2024-01-01",
+            end="2024-02-01",
+            output_root=tmp_path / "raw_databento",
+            chunk="month",
+            mode="batch",
+            raw_format="dbn-zstd",
+            dataset="NOT.GLBX",
+        )
+
+
+def test_iter_range_tasks_rejects_products_outside_allowed_glbx_universe(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="products outside the allowed GLBX.MDP3 futures universe"):
+        iter_range_tasks(
+            ["NOT_A_PRODUCT"],
+            start="2024-01-01",
+            end="2024-02-01",
+            output_root=tmp_path / "raw_databento",
+            chunk="month",
+            mode="batch",
+            raw_format="dbn-zstd",
+        )
 
 
 def test_first_pending_download_skips_existing_files(tmp_path: Path) -> None:
