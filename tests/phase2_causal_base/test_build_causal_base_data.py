@@ -1299,6 +1299,172 @@ def test_production_profile_fails_if_data_quality_degraded_missing(tmp_path: Pat
     assert not out_path.exists()
 
 
+def test_strict_profile_fails_if_required_metadata_values_are_null(tmp_path: Path) -> None:
+    raw_path = tmp_path / "data" / "raw" / "ES" / "2024.parquet"
+    out_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
+    _write_raw(
+        raw_path,
+        [
+            {
+                "ts_event": "2024-01-02T15:00:00Z",
+                "rtype": None,
+                "publisher_id": None,
+                "instrument_id": None,
+                "symbol": None,
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
+            }
+        ],
+    )
+
+    result = process_file(raw_path, out_path, profile="tier_1_core")
+
+    assert result.status == "FAIL"
+    assert result.missing_required_raw_cols == [
+        "rtype",
+        "publisher_id",
+        "instrument_id",
+        "symbol",
+    ]
+    assert (
+        "null or blank required raw schema columns: rtype, publisher_id, instrument_id, symbol"
+        in result.failures
+    )
+    assert not out_path.exists()
+
+
+def test_strict_profile_fails_if_symbol_is_blank(tmp_path: Path) -> None:
+    raw_path = tmp_path / "data" / "raw" / "ES" / "2024.parquet"
+    out_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
+    _write_raw(
+        raw_path,
+        [
+            {
+                "ts_event": "2024-01-02T15:00:00Z",
+                "rtype": 33,
+                "publisher_id": 1,
+                "instrument_id": 100,
+                "symbol": " ",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": False,
+            }
+        ],
+    )
+
+    result = process_file(raw_path, out_path, profile="tier_1_core")
+
+    assert result.status == "FAIL"
+    assert result.missing_required_raw_cols == ["symbol"]
+    assert "null or blank required raw schema columns: symbol" in result.failures
+    assert not out_path.exists()
+
+
+def test_strict_profile_fails_if_data_quality_status_is_null(tmp_path: Path) -> None:
+    raw_path = tmp_path / "data" / "raw" / "ES" / "2024.parquet"
+    out_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
+    _write_raw(
+        raw_path,
+        [
+            {
+                "ts_event": "2024-01-02T15:00:00Z",
+                "rtype": 33,
+                "publisher_id": 1,
+                "instrument_id": 100,
+                "symbol": "ESH4",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 10,
+                "data_quality_status": None,
+                "data_quality_degraded": False,
+            }
+        ],
+    )
+
+    result = process_file(raw_path, out_path, profile="tier_1_core")
+
+    assert result.status == "FAIL"
+    assert result.missing_required_raw_cols == ["data_quality_status"]
+    assert "null or blank required raw schema columns: data_quality_status" in result.failures
+    assert not out_path.exists()
+
+
+def test_strict_profile_fails_if_data_quality_degraded_is_null(tmp_path: Path) -> None:
+    raw_path = tmp_path / "data" / "raw" / "ES" / "2024.parquet"
+    out_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
+    _write_raw(
+        raw_path,
+        [
+            {
+                "ts_event": "2024-01-02T15:00:00Z",
+                "rtype": 33,
+                "publisher_id": 1,
+                "instrument_id": 100,
+                "symbol": "ESH4",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 10,
+                "data_quality_status": "available",
+                "data_quality_degraded": None,
+            }
+        ],
+    )
+
+    result = process_file(raw_path, out_path, profile="tier_1_core")
+
+    assert result.status == "FAIL"
+    assert result.missing_required_raw_cols == ["data_quality_degraded"]
+    assert "null or blank required raw schema columns: data_quality_degraded" in result.failures
+    assert not out_path.exists()
+
+
+def test_metadata_optional_test_remains_relaxed_for_null_optional_fields(tmp_path: Path) -> None:
+    raw_path = tmp_path / "data" / "raw" / "ES" / "2024.parquet"
+    out_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
+    _write_raw(
+        raw_path,
+        [
+            {
+                "ts_event": "2024-01-02T15:00:00Z",
+                "rtype": None,
+                "publisher_id": None,
+                "instrument_id": None,
+                "symbol": " ",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 10,
+                "data_quality_status": None,
+                "data_quality_degraded": None,
+            }
+        ],
+    )
+
+    result = process_file(raw_path, out_path, profile="metadata_optional_test")
+
+    assert result.status == "WARN"
+    assert result.raw_schema_policy == "relaxed"
+    assert result.failures == []
+    assert out_path.exists()
+    output = pd.read_parquet(out_path)
+    assert output.loc[0, "data_quality_status"] == "unknown"
+    assert output.loc[0, "data_quality_degraded"] == False
+
+
 def test_symbol_change_without_instrument_id_does_not_activate_roll_window(
     tmp_path: Path,
 ) -> None:

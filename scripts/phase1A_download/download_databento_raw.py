@@ -690,12 +690,28 @@ def validate_download(path: Path) -> dict[str, object]:
         if negative_volume_count:
             errors.append("negative_volume")
 
+    metadata_null_counts: dict[str, int] = {}
+    for column in ("rtype", "publisher_id", "instrument_id", "symbol"):
+        if column in cols:
+            null_count = int(df[column].isna().sum())
+            metadata_null_counts[column] = null_count
+            if null_count:
+                errors.append(f"null_metadata:{column}")
+
     instrument_id_nonnull = int(df["instrument_id"].notna().sum()) if "instrument_id" in cols else 0
     symbol_nonnull = int(df["symbol"].notna().sum()) if "symbol" in cols else 0
-    if not instrument_id_nonnull:
-        warnings.append("instrument_id_missing_or_null")
-    if not symbol_nonnull:
-        warnings.append("symbol_missing_or_null")
+    blank_symbol_count = 0
+    if "symbol" in cols:
+        blank_symbol_count = int(
+            df["symbol"]
+            .astype("string")
+            .str.strip()
+            .eq("")
+            .fillna(False)
+            .sum()
+        )
+        if blank_symbol_count:
+            errors.append("blank_symbol")
     degraded_bar_count = (
         int(df["data_quality_degraded"].fillna(False).astype(bool).sum())
         if "data_quality_degraded" in cols
@@ -715,8 +731,10 @@ def validate_download(path: Path) -> dict[str, object]:
         "missing_columns": missing,
         "bad_ohlc_count": bad_ohlc_count,
         "negative_volume_count": negative_volume_count,
+        "metadata_null_counts": metadata_null_counts,
         "instrument_id_nonnull": instrument_id_nonnull,
         "symbol_nonnull": symbol_nonnull,
+        "blank_symbol_count": blank_symbol_count,
         "degraded_bar_count": degraded_bar_count,
     }
 
@@ -1089,8 +1107,6 @@ def convert_dbn_archive_to_raw(
     if not groups:
         return []
 
-    import databento as db
-
     results: list[dict[str, object]] = []
     for (product, year), group_paths in sorted(groups.items()):
         out = raw_root / product / f"{year}.parquet"
@@ -1105,12 +1121,18 @@ def convert_dbn_archive_to_raw(
         )
         quality_default = "available" if vendor_quality_available else default_quality_status
         try:
+            if not vendor_quality_available:
+                raise ValueError(
+                    "missing dataset-condition metadata for canonical raw conversion"
+                )
             skipped = has_non_empty_output(out) and not overwrite
             if skipped:
                 check = validate_download(out)
                 if not check["valid"]:
                     raise ValueError(f"existing raw parquet failed validation: {check['errors']}")
             else:
+                import databento as db
+
                 frames = []
                 for path in group_paths:
                     store = db.DBNStore.from_file(path)

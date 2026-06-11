@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.phase4_features.build_baseline_features import (
     FEATURE_COLS,
+    PHASE3_LABEL_SEMANTICS_ID,
     add_base_market_features,
     add_intermarket_features,
     process_file,
@@ -77,6 +78,15 @@ def _frame(
             "target_invalid_reason": "",
             "target_ret_15m": 0.0,
             "target_ret_ticks_15m": 0.0,
+            "target_gross_dollars_15m": 0.0,
+            "target_estimated_cost_ticks": 2.0,
+            "target_estimated_cost_dollars": 25.0,
+            "target_net_ticks_after_est_cost": 0.0,
+            "target_net_dollars_after_est_cost": 0.0,
+            "target_sign_15m": 0,
+            "target_sign_with_deadzone": 0,
+            "target_tradeable_after_cost": False,
+            "target_horizon_bars": 15,
             "mae_ticks_15m": 0.0,
             "mfe_ticks_15m": 0.0,
             "fade_long_success_15m": False,
@@ -94,9 +104,28 @@ def _frame(
             "roll_detection_available": True,
             "roll_detection_source": "fixture",
             "roll_policy_status": "active",
+            "label_semantics": PHASE3_LABEL_SEMANTICS_ID,
+            "cost_source": "fixture_costs",
+            "cost_provisional": False,
         }
     )
     return df
+
+
+def _write_costs(path: Path, market: str = "ES", tick_size: float = 0.25) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "markets:",
+                f"  {market}:",
+                f"    tick_size: {tick_size}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def test_profile_aliases_resolve_for_phase4() -> None:
@@ -295,11 +324,90 @@ def test_registry_excludes_targets_audit_source_and_forbidden_columns() -> None:
     assert any("forbidden columns" in failure for failure in injected)
 
 
+def _process_fixture(
+    tmp_path: Path,
+    df: pd.DataFrame,
+    *,
+    costs_market: str = "ES",
+    tick_size: float = 0.25,
+) -> tuple[object, Path]:
+    input_root = tmp_path / "data" / "labeled"
+    output_root = tmp_path / "data" / "feature_matrices" / "baseline"
+    input_path = input_root / "ES" / "2024.parquet"
+    output_path = output_root / "ES" / "2024.parquet"
+    costs_path = _write_costs(tmp_path / "configs" / "costs.yaml", costs_market, tick_size)
+    input_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(input_path, index=False)
+    result = process_file(
+        input_path,
+        output_path,
+        profile="tier_1_core",
+        costs_config=costs_path,
+        input_root=input_root,
+    )
+    return result, output_path
+
+
+def test_process_file_fails_when_label_contract_fields_are_missing(tmp_path: Path) -> None:
+    df = _frame(70).drop(columns=["label_semantics", "cost_source", "cost_provisional"])
+    result, output_path = _process_fixture(tmp_path, df)
+
+    assert result.status == "FAIL"
+    assert any("missing required Phase 3 label columns" in failure for failure in result.failures)
+    assert not output_path.exists()
+
+
+def test_process_file_fails_when_label_semantics_is_noncanonical(tmp_path: Path) -> None:
+    df = _frame(70)
+    df["label_semantics"] = "wrong"
+    result, output_path = _process_fixture(tmp_path, df)
+
+    assert result.status == "FAIL"
+    assert any("noncanonical label_semantics" in failure for failure in result.failures)
+    assert not output_path.exists()
+
+
+def test_process_file_fails_when_costs_are_provisional(tmp_path: Path) -> None:
+    df = _frame(70)
+    df["cost_provisional"] = True
+    result, output_path = _process_fixture(tmp_path, df)
+
+    assert result.status == "FAIL"
+    assert any("provisional Phase 3 costs" in failure for failure in result.failures)
+    assert not output_path.exists()
+
+
+@pytest.mark.parametrize("value", [False, pd.NA])
+def test_process_file_fails_when_roll_detection_is_unavailable(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    df = _frame(70)
+    df["roll_detection_available"] = df["roll_detection_available"].astype("object")
+    df.loc[5, "roll_detection_available"] = value
+    result, output_path = _process_fixture(tmp_path, df)
+
+    assert result.status == "FAIL"
+    assert any(
+        "roll_detection_available must be true" in failure for failure in result.failures
+    )
+    assert not output_path.exists()
+
+
+def test_process_file_fails_when_market_tick_size_is_missing(tmp_path: Path) -> None:
+    result, output_path = _process_fixture(tmp_path, _frame(70), costs_market="CL")
+
+    assert result.status == "FAIL"
+    assert any("missing tick_size for market: ES" in failure for failure in result.failures)
+    assert not output_path.exists()
+
+
 def test_process_file_writes_matrix_registries_and_reports(tmp_path: Path) -> None:
     input_root = tmp_path / "data" / "labeled"
     output_root = tmp_path / "data" / "feature_matrices" / "baseline"
     reports_root = tmp_path / "reports" / "features_baseline"
     input_path = input_root / "ES" / "2024.parquet"
+    costs_path = _write_costs(tmp_path / "configs" / "costs.yaml")
     input_path.parent.mkdir(parents=True, exist_ok=True)
     _frame(70).to_parquet(input_path, index=False)
 
@@ -307,6 +415,7 @@ def test_process_file_writes_matrix_registries_and_reports(tmp_path: Path) -> No
         input_path,
         output_root / "ES" / "2024.parquet",
         profile="tier_1_core",
+        costs_config=costs_path,
         input_root=input_root,
     )
     write_reports([result], profile="tier_1_core", output_root=output_root, reports_root=reports_root)

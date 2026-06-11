@@ -68,6 +68,25 @@ def _write_costs(path: Path, markets_blob: str) -> None:
     )
 
 
+def _write_es_costs(path: Path) -> None:
+    _write_costs(
+        path,
+        "\n".join(
+            [
+                "  ES:",
+                "    tick_size: 0.25",
+                "    tick_value: 12.5",
+                "    point_value: 50.0",
+                "    min_profit_ticks: 2.0",
+                "    min_stop_ticks: 4.0",
+                "    round_turn_cost_ticks: 2.0",
+                "    cost_source: test_costs",
+                "    provisional: false",
+            ]
+        ),
+    )
+
+
 def _rows_with_gross_ticks(gross_ticks: float) -> list[dict[str, object]]:
     rows = _base_rows()
     entry_price = 100.0
@@ -89,13 +108,15 @@ def test_entry_exit_alignment_uses_next_bar_open_not_close_t(tmp_path: Path) -> 
     rows[0]["close"] = 999.0
     input_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
     output_path = tmp_path / "data" / "labeled" / "ES" / "2024.parquet"
+    costs_path = tmp_path / "configs" / "costs.yaml"
     _write_causal(input_path, rows)
+    _write_es_costs(costs_path)
 
     result = process_file(
         input_path,
         output_path,
         profile="tier_1_core",
-        costs_config=tmp_path / "configs" / "costs.yaml",
+        costs_config=costs_path,
     )
 
     assert result.failures == []
@@ -210,7 +231,7 @@ def test_explicit_cost_config_is_loaded_and_reported(tmp_path: Path) -> None:
     assert config.defaults_used == []
 
 
-def test_present_cost_config_missing_market_warns(tmp_path: Path) -> None:
+def test_present_cost_config_missing_market_fails_without_output(tmp_path: Path) -> None:
     input_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
     output_path = tmp_path / "data" / "labeled" / "ES" / "2024.parquet"
     costs_path = tmp_path / "configs" / "costs.yaml"
@@ -239,10 +260,12 @@ def test_present_cost_config_missing_market_warns(tmp_path: Path) -> None:
         costs_config=costs_path,
     )
 
-    assert result.status == "WARN"
+    assert result.status == "FAIL"
     assert "market_cost_missing" in result.config["defaults_used"]
     assert any("market config defaults used" in warning for warning in result.warnings)
     assert "placeholder costs used" in result.warnings
+    assert any("placeholder/default costs unavailable" in failure for failure in result.failures)
+    assert not output_path.exists()
 
 
 def test_net_ticks_after_cost_semantics() -> None:
@@ -326,22 +349,24 @@ def test_output_schema_and_reports(tmp_path: Path) -> None:
     input_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
     output_path = tmp_path / "data" / "labeled" / "ES" / "2024.parquet"
     reports_root = tmp_path / "reports" / "labels"
+    costs_path = tmp_path / "configs" / "costs.yaml"
     input_df = pd.DataFrame(_base_rows())
     _write_causal(input_path, input_df.to_dict("records"))
+    _write_es_costs(costs_path)
 
     result = process_file(
         input_path,
         output_path,
         profile="tier_1_core",
-        costs_config=tmp_path / "configs" / "costs.yaml",
+        costs_config=costs_path,
     )
     write_reports([result], reports_root, "tier_1_core")
 
     output = pd.read_parquet(output_path)
     assert list(output.columns) == list(input_df.columns) + LABEL_COLUMNS
     assert output["label_semantics"].eq(LABEL_SEMANTICS_ID).all()
-    assert output["cost_source"].eq("embedded_defaults").all()
-    assert output["cost_provisional"].eq(True).all()
+    assert output["cost_source"].eq("test_costs").all()
+    assert output["cost_provisional"].eq(False).all()
     manifest = json.loads((reports_root / "label_manifest.json").read_text())
     report = json.loads((reports_root / "label_report.json").read_text())
     provenance_keys = {
@@ -386,16 +411,18 @@ def test_mixed_roll_detection_availability_is_reported(tmp_path: Path) -> None:
     input_path = tmp_path / "data" / "causally_gated_normalized" / "ES" / "2024.parquet"
     output_path = tmp_path / "data" / "labeled" / "ES" / "2024.parquet"
     reports_root = tmp_path / "reports" / "labels"
+    costs_path = tmp_path / "configs" / "costs.yaml"
     rows = _base_rows()
     rows[3]["roll_detection_available"] = False
     rows[4]["roll_detection_available"] = False
     _write_causal(input_path, rows)
+    _write_es_costs(costs_path)
 
     result = process_file(
         input_path,
         output_path,
         profile="tier_1_core",
-        costs_config=tmp_path / "configs" / "costs.yaml",
+        costs_config=costs_path,
     )
     write_reports([result], reports_root, "tier_1_core")
 
@@ -408,6 +435,9 @@ def test_mixed_roll_detection_availability_is_reported(tmp_path: Path) -> None:
     assert result.roll_detection_unavailable_rows == 2
     assert result.roll_protection_unavailable == True
     assert "roll protection unavailable for 2 rows" in result.warnings[-1]
+    assert result.status == "FAIL"
+    assert "roll protection unavailable for 2 rows" in result.failures[-1]
+    assert not output_path.exists()
     assert output_row["roll_detection_available"] == False
     assert output_row["roll_detection_available_rows"] == len(rows) - 2
     assert output_row["roll_detection_unavailable_rows"] == 2

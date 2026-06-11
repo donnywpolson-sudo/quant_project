@@ -828,6 +828,38 @@ def test_validate_download_rejects_non_monotonic_timestamps(tmp_path: Path) -> N
     assert "non_monotonic_ts_event" in check["errors"]
 
 
+def test_validate_download_rejects_null_or_blank_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "bad_metadata.parquet"
+    pd.DataFrame(
+        {
+            "ts_event": [
+                pd.Timestamp("2024-01-02T15:00:00Z"),
+                pd.Timestamp("2024-01-02T15:01:00Z"),
+            ],
+            "open": [10.0, 10.0],
+            "high": [11.0, 11.0],
+            "low": [9.0, 9.0],
+            "close": [10.5, 10.5],
+            "volume": [1, 1],
+            "rtype": [None, 33],
+            "publisher_id": [1, None],
+            "instrument_id": [100, None],
+            "symbol": [None, " "],
+            "data_quality_status": ["available", "available"],
+            "data_quality_degraded": [False, False],
+        }
+    ).to_parquet(path, index=False)
+
+    check = validate_download(path)
+
+    assert check["valid"] is False
+    assert "null_metadata:rtype" in check["errors"]
+    assert "null_metadata:publisher_id" in check["errors"]
+    assert "null_metadata:instrument_id" in check["errors"]
+    assert "null_metadata:symbol" in check["errors"]
+    assert "blank_symbol" in check["errors"]
+
+
 def test_execute_download_validates_existing_files_as_ok(tmp_path: Path) -> None:
     path = tmp_path / "raw" / "ES" / "2024.parquet"
     path.parent.mkdir(parents=True)
@@ -1108,6 +1140,23 @@ def test_batch_convert_parquet_preserves_degraded_dataset_condition(
     assert out["data_quality_status"].tolist() == ["available", "degraded"]
     assert out["data_quality_degraded"].tolist() == [False, True]
     assert results[0]["dataset_condition"]["degraded_date_count"] == 1
+
+
+def test_convert_dbn_archive_fails_without_quality_metadata(tmp_path: Path) -> None:
+    dbn_root = tmp_path / "dbn"
+    raw_root = tmp_path / "raw"
+    dbn_path = dbn_root / "ES" / "2024" / "2024-01" / "job-test.dbn.zst"
+    dbn_path.parent.mkdir(parents=True)
+    dbn_path.write_bytes(b"dbn-zstd-placeholder")
+
+    results = convert_dbn_archive_to_raw(dbn_root, raw_root)
+
+    output_path = raw_root / "ES" / "2024.parquet"
+    assert results[0]["status"] == "convert_error"
+    assert "missing dataset-condition metadata" in str(results[0]["error"])
+    assert results[0]["data_quality_source"] == "metadata_unavailable"
+    assert results[0]["vendor_quality_available"] is False
+    assert not output_path.exists()
 
 
 def test_convert_dbn_archive_writes_canonical_raw_parquet_and_manifest(

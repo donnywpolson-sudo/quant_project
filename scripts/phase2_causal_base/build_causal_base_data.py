@@ -416,6 +416,15 @@ def required_raw_schema_cols_for_policy(policy: str) -> list[str]:
     return STRICT_RAW_COLUMNS.copy()
 
 
+def strict_raw_value_failures(raw: pd.DataFrame, required_raw_cols: list[str]) -> list[str]:
+    failed = [col for col in required_raw_cols if col in raw.columns and raw[col].isna().any()]
+    if "symbol" in raw.columns:
+        blank_symbols = raw["symbol"].astype("string").str.strip().eq("").fillna(False)
+        if bool(blank_symbols.any()) and "symbol" not in failed:
+            failed.append("symbol")
+    return failed
+
+
 def _parse_hhmm(value: str) -> tuple[int, int]:
     hour_text, minute_text = value.split(":", 1)
     return int(hour_text), int(minute_text)
@@ -649,6 +658,16 @@ def _prepare_raw_frame(
                 "missing required raw schema columns: " + ", ".join(missing_required)
             )
         return None
+    if raw_schema_policy == "strict":
+        invalid_required = strict_raw_value_failures(raw, required_raw_cols)
+        if invalid_required:
+            if required and result is not None:
+                result.missing_required_raw_cols = invalid_required
+                result.failures.append(
+                    "null or blank required raw schema columns: "
+                    + ", ".join(invalid_required)
+                )
+            return None
 
     ts, timestamp_source = _timestamp_from_raw(raw)
     if ts is None or timestamp_source is None:

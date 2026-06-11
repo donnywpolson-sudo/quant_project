@@ -749,6 +749,11 @@ def process_file(
         or "estimated_cost_ticks" in config.defaults_used
     ):
         result.warnings.append("placeholder costs used")
+        result.failures.append(
+            "placeholder/default costs unavailable for canonical labels: "
+            + ",".join(config.defaults_used)
+        )
+        return result
     if config.provisional:
         result.warnings.append(f"provisional costs used: {config.cost_source}")
 
@@ -773,10 +778,13 @@ def process_file(
     result.roll_detection_available = result.roll_detection_unavailable_rows == 0
     if result.roll_detection_unavailable_rows:
         result.roll_protection_unavailable = True
-        result.warnings.append(
+        message = (
             "roll protection unavailable for "
             f"{result.roll_detection_unavailable_rows} rows: roll_detection_available false"
         )
+        result.warnings.append(message)
+        result.failures.append(message)
+        return result
 
     output = add_labels(df, config)
     result.output_rows = len(output)

@@ -32,6 +32,7 @@ STATIC_PROFILE_MARKETS = {"tier_1_core": ["CL", "ES", "ZN"]}
 STATIC_PROFILE_YEARS = {"tier_1_core": [2023, 2024, 2025]}
 TIER1_MARKETS = ("CL", "ES", "ZN")
 EPS = 1e-12
+PHASE3_LABEL_SEMANTICS_ID = "phase3_labels_v1_next_1m_open_to_15m_open"
 
 FEATURE_FAMILIES: dict[str, list[str]] = {
     "baseline_ohlcv": [
@@ -259,6 +260,33 @@ REQUIRED_INPUT_COLUMNS = [
     "target_valid",
 ]
 
+REQUIRED_LABEL_CONTRACT_COLUMNS = [
+    "label_semantics",
+    "cost_source",
+    "cost_provisional",
+    "roll_detection_available",
+    "target_ret_15m",
+    "target_ret_ticks_15m",
+    "target_net_ticks_after_est_cost",
+    "target_tradeable_after_cost",
+    "target_valid",
+]
+
+LABEL_NON_NULL_COLUMNS = [
+    "label_semantics",
+    "cost_source",
+    "cost_provisional",
+    "roll_detection_available",
+    "target_valid",
+]
+
+TARGET_VALUE_COLUMNS = [
+    "target_ret_15m",
+    "target_ret_ticks_15m",
+    "target_net_ticks_after_est_cost",
+    "target_tradeable_after_cost",
+]
+
 
 @dataclass
 class FeatureResult:
@@ -429,6 +457,65 @@ def load_tick_sizes(costs_config: Path) -> dict[str, float]:
             if isinstance(config, Mapping) and config.get("tick_size") is not None:
                 tick_sizes[str(market)] = float(config["tick_size"])
     return tick_sizes
+
+
+def resolve_market_tick_size(costs_config: Path, market: str) -> tuple[float | None, str | None]:
+    if not costs_config.exists():
+        return None, f"missing costs config: {relative_path(costs_config)}"
+    raw = _read_yaml(costs_config)
+    markets = raw.get("markets", {})
+    if not isinstance(markets, Mapping):
+        return None, "invalid costs config: markets mapping missing"
+    if market not in markets:
+        return None, f"missing tick_size for market: {market}"
+    config = markets[market]
+    if not isinstance(config, Mapping) or config.get("tick_size") is None:
+        return None, f"missing tick_size for market: {market}"
+    try:
+        tick_size = float(config["tick_size"])
+    except (TypeError, ValueError):
+        return None, f"invalid tick_size for market: {market}"
+    if not math.isfinite(tick_size) or tick_size <= 0.0:
+        return None, f"invalid tick_size for market: {market}"
+    return tick_size, None
+
+
+def validate_label_contract(df: pd.DataFrame) -> list[str]:
+    failures: list[str] = []
+    missing = [col for col in REQUIRED_LABEL_CONTRACT_COLUMNS if col not in df.columns]
+    if missing:
+        failures.append("missing required Phase 3 label columns: " + ",".join(missing))
+        return failures
+
+    null_cols = [col for col in LABEL_NON_NULL_COLUMNS if df[col].isna().any()]
+    if null_cols:
+        failures.append("null required Phase 3 label columns: " + ",".join(null_cols))
+
+    semantics = df["label_semantics"].astype("string").fillna("")
+    if semantics.ne(PHASE3_LABEL_SEMANTICS_ID).any():
+        failures.append(
+            "noncanonical label_semantics: expected " + PHASE3_LABEL_SEMANTICS_ID
+        )
+
+    cost_source_blank = df["cost_source"].astype("string").fillna("").str.strip().eq("")
+    if cost_source_blank.any():
+        failures.append("blank cost_source in Phase 3 labels")
+
+    if bool_col(df, "cost_provisional").any():
+        failures.append("provisional Phase 3 costs are not allowed for features")
+
+    if not bool_col(df, "roll_detection_available").all():
+        failures.append("roll_detection_available must be true for every labeled row")
+
+    target_valid = bool_col(df, "target_valid")
+    target_null_cols = [
+        col for col in TARGET_VALUE_COLUMNS if df.loc[target_valid, col].isna().any()
+    ]
+    if target_null_cols:
+        failures.append(
+            "null target values on target_valid rows: " + ",".join(target_null_cols)
+        )
+    return failures
 
 
 def bool_col(df: pd.DataFrame, column: str, default: bool = False) -> pd.Series:
@@ -1133,7 +1220,16 @@ def process_file(
         result.failures.append(f"missing required input columns: {','.join(missing)}")
         return result
 
-    tick_size = load_tick_sizes(costs_config).get(market, 0.01)
+    label_failures = validate_label_contract(df)
+    if label_failures:
+        result.failures.extend(label_failures)
+        return result
+
+    tick_size, tick_failure = resolve_market_tick_size(costs_config, market)
+    if tick_failure:
+        result.failures.append(tick_failure)
+        return result
+
     out = add_base_market_features(df, tick_size)
     out, intermarket_missing = add_intermarket_features(
         out,
