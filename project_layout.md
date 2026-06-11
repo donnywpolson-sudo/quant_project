@@ -23,11 +23,21 @@ The pipeline should first prove that the data, labels, features, walk-forward sp
 
 ---
 
-### Raw data contract
+### Raw ingest contract
 
-Raw input files are Databento continuous-contract 1-minute OHLCV parquet files.
+Phase 1 is a two-step raw-ingest workflow:
 
-Path pattern:
+- Phase 1A downloads and archives Databento DBN/DBN.ZST chunks.
+- Phase 1B converts and stitches one or many DBN chunks into immutable 1-minute OHLCV parquet.
+- Phase 2 validates, session-normalizes, roll-audits, synthetic-marks, and causally gates the parquet.
+
+DBN archive path pattern:
+
+```text
+data/dbn/{market}/{year}/...dbn.zst
+```
+
+Raw parquet path pattern:
 
 ```text
 data/raw/{market}/{year}.parquet
@@ -57,7 +67,8 @@ strict raw fields are FAIL, not WARN.
 Timestamp policy:
 
 ```text
-ts_event -> ts
+Phase 1 preserves ts_event.
+Phase 2 converts ts_event -> ts.
 ```
 
 Databento metadata columns must be preserved for audit but excluded from model features by default:
@@ -75,7 +86,13 @@ Important realism note:
 Continuous contracts are research series, not directly tradeable instruments.
 ```
 
-The pipeline must report symbol and instrument changes, flag roll boundaries, invalidate suspicious roll-window labels, and eventually support contract-specific execution mapping before live deployment.
+Raw ingest must preserve `rtype`, `publisher_id`, `instrument_id`, and `symbol`.
+Phase 1 must not rename `ts_event`, must not fill missing 1-minute bars, and
+must fail if required schema or metadata is missing or fake-filled. Missing-bar
+repair is Phase 2-only and must be marked synthetic. The pipeline must report
+symbol and instrument changes, flag roll boundaries, invalidate suspicious
+roll-window labels, and eventually support contract-specific execution mapping
+before live deployment.
 
 ---
 
@@ -117,10 +134,10 @@ metadata_optional_test = tests only
 ```
 
 `tier_1` is for proving the machinery on CL/ES/ZN. `tier_2` is the actual
-27-market GLBX-only research universe. `tier_1` results do not prove `tier_2`
-performance. Missing tier-2 data should fail stage validation clearly, not
-silently shrink the universe. `all_raw` is inventory only and must not feed
-labels, WFA, gates, or research decisions.
+28-market GLBX-only research universe. `tier_1` results do not prove `tier_2`
+performance. Missing Tier-2 data must fail stage validation clearly; the
+pipeline must not shrink the Tier-2 universe to whatever data exists. `all_raw`
+is inventory only and must not feed labels, WFA, gates, or research decisions.
 
 Each market config should include:
 
@@ -145,7 +162,7 @@ ZN
 Tier-2 real research universe:
 
 ```text
-ES NQ RTY YM
+ES NQ RTY YM VX
 CL NG RB HO
 GC SI HG
 SR3 ZN ZB
@@ -167,8 +184,13 @@ target_horizon_bars = 15
 trend_horizon_bars = 30
 purge_bars = auto
 resolved_purge_bars = entry_lag_bars + target_horizon_bars
-default resolved value = 16
+default resolved_purge_bars = 16
 ```
+
+Features use completed bar `t`, entry occurs on bar `t+1`, and the 15-minute
+target exits at `t+1+15`, so the target touches through `t+16`. Purge must cover
+that full dependency window; hardcoded 15-bar purge is not valid for this
+alignment.
 
 Profiles:
 
@@ -195,21 +217,25 @@ This is the realistic operational pipeline. The old 27-stage checklist is preser
 
 | Phase | Name | Main artifact | Purpose |
 |---:|---|---|---|
-| 1 | Raw Data | `data/raw/{market}/{year}.parquet` | Immutable Databento OHLCV input. |
+| 1A | DBN Archive | `data/dbn/{market}/{year}/...dbn.zst` | Download and archive immutable Databento DBN/DBN.ZST chunks. |
+| 1B | Raw Parquet Stitch | `data/raw/{market}/{year}.parquet` | Convert/stitch DBN chunks into immutable OHLCV parquet. |
 | 2 | Causal Base Builder | `data/causally_gated_normalized/{market}/{year}.parquet` | Validate, session-normalize, roll-flag, synthetic-mark, and causally gate raw bars. |
 | 3 | Target / Label Generation | `data/labeled/{market}/{year}.parquet` | Build next-bar-entry 15-minute labels with cost-aware and intraday validity flags. |
-| 4 | Baseline + L0 Regime Feature Matrix | `data/feature_matrices/baseline/{market}/{year}.parquet` | Build OHLCV-only baseline and L0 regime features plus metadata and target columns. |
-| 5 | Column Registry | `feature_cols.json`, `target_cols.json`, `metadata_cols.json` | Hard-gate feature/target/metadata separation. |
+| 4 | Baseline + L0 Regime Feature Matrix | `data/feature_matrices/baseline/{market}/{year}.parquet` | Build OHLCV-only baseline and L0 regime features plus metadata, target, and initial registry columns. |
+| 5 | Column Registry | `feature_cols.json`, `target_cols.json`, `metadata_cols.json` | Audit, freeze, and promote feature/target/metadata separation for WFA. |
 | 6 | WFA Split Plan | `reports/wfa/split_plan.json` | Build deterministic train/test folds with purge and final-holdout awareness. |
-| 7 | Baseline WFA Train/Test | `reports/wfa/baseline_wfa_report.json` | Train baseline model using train-only preprocessing and test-only prediction. |
-| 8 | Baseline OOS Predictions | `data/predictions/baseline/oos_predictions.parquet` | Store OOS predictions with execution-ready prices. |
-| 9 | Baseline Execution + Cost Model | `data/executions/baseline/executions.parquet` | Convert predictions to positions, apply costs, enforce no-overnight rules. |
+| 7A | Linear Control WFA | `reports/wfa/baseline_wfa_report.json` | Train Ridge/logistic control models using train-only preprocessing and test-only prediction. |
+| 7B | Sklearn Nonlinear Challenger WFA | `reports/wfa/baseline_wfa_report.json` | Compare HistGradientBoosting challengers without changing split discipline. |
+| 7C | Optional Boosted-Tree Challenger WFA | `reports/wfa/baseline_wfa_report.json` | Optionally compare CPU-first LightGBM/XGBoost challengers without requiring those dependencies. |
+| 8 | Baseline OOS Predictions | `data/predictions/baseline/oos_predictions.parquet` | Store multi-model OOS predictions with raw and calibrated scores plus execution-ready prices. |
+| 8A | Signal Calibration + Model Comparison | `reports/model_selection/` | Compare models and calibration using train-fold-only fitting; exclude final holdout from selection. |
+| 9 | Baseline Execution + Cost Model | `data/executions/baseline/executions.parquet` | Convert calibrated model scores into positions, apply costs, enforce no-overnight rules. |
 | 10 | Baseline Metrics + Diagnostics | `reports/metrics/baseline_metrics.json` | Evaluate prediction behavior, turnover, cost drag, and net economics. |
 | 11 | Baseline Accept / Reject Gate | `reports/gates/baseline_gate.json` | Separate structural pass/fail from economic pass/fail. |
 | 12 | Feature Expansion | `data/feature_matrices/expanded/{market}/{year}.parquet` | Add broader OHLCV-only candidates. |
 | 13 | Feature Discovery | `reports/feature_discovery/` | Analyze nulls, stability, redundancy, leakage, and train-only correlations. |
 | 14 | Train-Only Feature Ranking / Selection | `reports/feature_selection/` | Select features without using final holdout or test-fold information. |
-| 15 | Frozen Feature + Policy Set | `data/frozen_features/phase5_v1/` | Freeze features and execution policy before final evaluation. |
+| 15 | Frozen Feature + Model + Calibration + Policy Set | `data/frozen_features/phase5_v1/`, `data/frozen_models/phase5_v1/` | Freeze features, model config, calibration config, and execution policy before final evaluation. |
 | 16 | Final Holdout Split Plan | `reports/final_wfa/final_split_plan.json` | Ensure final test windows are entirely inside final holdout. |
 | 17 | Final WFA With Frozen Features | `reports/final_wfa/final_wfa_report.json` | Evaluate frozen model setup on final holdout. |
 | 18 | Final OOS Predictions | `data/predictions/final/oos_predictions.parquet` | Store final OOS predictions with execution-ready prices. |
@@ -223,9 +249,9 @@ This is the realistic operational pipeline. The old 27-stage checklist is preser
 ### Legacy stage mapping
 
 ```text
-Old stages 1-8   -> Phase 1-2: raw data plus causal base builder
+Old stages 1-8   -> Phase 1A-2: DBN archive, raw parquet stitch, and causal base builder
 Old stages 9-13  -> Phase 3-5: labels, baseline feature matrix, registry
-Old stages 14-19 -> Phase 6-11: WFA, predictions, execution, metrics, baseline gate
+Old stages 14-19 -> Phase 6-11: WFA, predictions, calibration/model comparison, execution, metrics, baseline gate
 Old stages 20-23 -> Phase 12-15: feature expansion, discovery, selection, frozen set
 Old stages 24-27 -> Phase 16-22: final holdout, final WFA, final predictions, final execution, final metrics, prop simulation, strategy gate
 ```
@@ -235,7 +261,8 @@ Old stages 24-27 -> Phase 16-22: final holdout, final WFA, final predictions, fi
 ### Core artifact flow
 
 ```text
-data/raw/{market}/{year}.parquet
+data/dbn/{market}/{year}/...dbn.zst
+-> data/raw/{market}/{year}.parquet
 -> data/causally_gated_normalized/{market}/{year}.parquet
 -> data/labeled/{market}/{year}.parquet
 -> data/feature_matrices/baseline/{market}/{year}.parquet
@@ -248,6 +275,7 @@ data/raw/{market}/{year}.parquet
 -> reports/feature_discovery/
 -> reports/feature_selection/
 -> data/frozen_features/phase5_v1/feature_cols.json
+-> data/frozen_models/phase5_v1/model_config.yaml
 -> data/frozen_features/phase5_v1/policy_config.json
 -> reports/final_wfa/final_split_plan.json
 -> data/predictions/final/oos_predictions.parquet
@@ -256,6 +284,61 @@ data/raw/{market}/{year}.parquet
 -> reports/prop_sim/final_prop_simulation.json
 -> reports/gates/strategy_gate.json
 ```
+
+---
+
+### Downstream ML model policy
+
+The pipeline treats model choice as a staged research comparison, not a single
+hardcoded model.
+
+Required staged order:
+
+- Phase 7A: linear control models
+- Phase 7A linear controls
+- Phase 7B: sklearn nonlinear challenger
+- Phase 7B HistGradientBoosting challengers
+- Phase 7C: optional LightGBM/XGBoost challenger
+- Phase 7C optional LightGBM/XGBoost challengers
+- Phase 8A: probability calibration and model comparison
+- Phase 8A calibration/model comparison
+- Phase 15: frozen feature + model + calibration + policy set
+
+Do not use neural nets, transformers, or reinforcement learning until simpler
+tabular models survive WFA, costs, turnover, final holdout, and prop-firm
+simulation.
+
+Approved initial model families:
+
+```text
+ridge_return
+logistic_direction
+logistic_fade_success
+logistic_trend_danger
+hist_gradient_boosting_direction
+hist_gradient_boosting_fade_success
+hist_gradient_boosting_trend_danger
+lightgbm_direction_optional
+xgboost_direction_optional
+```
+
+All models must use:
+
+- train-fold-only fitting
+- train-only imputation
+- train-only scaling where applicable
+- test-fold-only prediction
+- no random train/test split
+- no final-holdout tuning
+- `model_id` recorded in all prediction and metric reports
+- model config hash recorded in all prediction and metric reports
+- feature config hash recorded in all prediction and metric reports
+
+Ridge/logistic models are controls. HistGradientBoosting is the first nonlinear
+challenger. LightGBM/XGBoost are optional downstream challengers, disabled by
+default, and their external dependencies must not be required for baseline tests
+to pass. The first priority classifier is the trend-danger / do-not-fade classifier
+because fade strategies are vulnerable to real trend days.
 
 ---
 
@@ -342,7 +425,8 @@ paper/live: future forward test
 - Model fit on train fold only.
 - Predictions are generated on test fold only.
 - Feature ranking, feature selection, and policy selection are train-only or research-period-only.
-- Final WFA uses frozen features and frozen policy only.
+- Final WFA uses frozen features, frozen model config, frozen calibration config,
+  and frozen policy only.
 
 #### Execution and cost rules
 
@@ -551,17 +635,26 @@ git status --short
 
 ## Part 2 — Phase-by-Phase Build Requirements
 
-# Phase 1 — Raw Data
+# Phase 1 — DBN Archive and Raw Parquet Stitch
 
 ## Purpose
 
-Store immutable Databento continuous-contract 1-minute OHLCV parquet files.
+Archive immutable Databento DBN/DBN.ZST chunks and convert/stitch them into
+immutable continuous-contract 1-minute OHLCV parquet files.
 
 ## Input
 
-External Databento parquet exports.
+Databento DBN or DBN.ZST chunks, one or many per market/year.
 
-## Required path
+## Required paths
+
+DBN archive:
+
+```text
+data/dbn/{market}/{year}/...dbn.zst
+```
+
+Raw parquet output:
 
 ```text
 data/raw/{market}/{year}.parquet
@@ -589,18 +682,28 @@ Production and research profiles require every field above. The
 
 ## Build requirements
 
+- Support one or many DBN chunks per market/year.
+- Hash every DBN chunk before conversion.
+- Convert all chunks, concatenate, sort by `ts_event`, and check duplicates.
 - Do not mutate raw files.
-- Do not overwrite raw files during pipeline runs.
+- Do not overwrite DBN archives or raw parquet files during pipeline runs.
 - Do not track raw files in git.
 - Ensure market and year can be inferred from the path.
-- Preserve Databento metadata for audit.
-- Report file hash, first timestamp, last timestamp, and row count.
+- Preserve `rtype`, `publisher_id`, `instrument_id`, and `symbol` for audit.
+- Do not rename `ts_event` to `ts` in Phase 1.
+- Do not fill missing 1-minute bars in Phase 1.
+- Fail if required schema or metadata is missing or fake-filled.
+- Report `price_scale_policy`, `data_quality_source`,
+  `vendor_quality_available`, `decoded_symbols`, `input_hashes`,
+  `output_hash`, row counts, `first_ts`, and `last_ts`.
 
 ## Breakpoints
 
 - Missing required columns in production or research profiles.
 - Bad timestamp type.
 - Duplicate `ts_event` rows.
+- Missing or fake-filled Databento metadata.
+- Missing data-quality source.
 - Mixed or unexpected symbols without roll reporting.
 - Calendar-year files that split Globex sessions.
 - Continuous-contract adjustment artifacts treated as alpha.
@@ -610,6 +713,8 @@ Production and research profiles require every field above. The
 - File exists for each configured market/year.
 - File is non-empty.
 - Required columns exist; missing strict raw fields are FAIL, not WARN.
+- Each DBN input chunk is hashed and recorded.
+- Output hash, row counts, first timestamp, and last timestamp are reported.
 - Path market/year matches configured profile.
 
 ---
@@ -899,6 +1004,35 @@ cost_source
 cost_provisional
 ```
 
+## Downstream target groups
+
+```yaml
+return_target:
+  - target_ret_15m
+  - target_ret_ticks_15m
+  - target_net_ticks_after_est_cost
+  - target_net_dollars_after_est_cost
+
+direction_target:
+  - target_sign_15m
+  - target_sign_with_deadzone
+  - target_tradeable_after_cost
+
+fade_success_target:
+  - target_fade_long_success_15m
+  - target_fade_short_success_15m
+  - target_fade_success_15m
+
+trend_danger_target:
+  - target_trend_danger_long_30m
+  - target_trend_danger_short_30m
+  - target_trend_danger_30m
+```
+
+Fade-success and trend-danger labels are targets only. They may be built using
+future information inside target construction, must never be used as features,
+and must be excluded from feature matrices.
+
 ## Required validity logic
 
 `target_valid` must be false if:
@@ -991,7 +1125,14 @@ reports/features_baseline/baseline_feature_manifest.json
 reports/features_baseline/baseline_feature_report.json
 reports/features_baseline/feature_registry.json
 reports/features_baseline/feature_correlation_report.csv
+data/feature_matrices/baseline/feature_cols.json
+data/feature_matrices/baseline/target_cols.json
+data/feature_matrices/baseline/metadata_cols.json
+data/feature_matrices/baseline/excluded_cols.json
 ```
+
+Phase 4 writes the initial `feature_cols`, `target_cols`, `metadata_cols`, and
+`excluded_cols` registries. Phase 5 audits, freezes, and promotes them for WFA.
 
 ## Feature goal
 
@@ -1042,6 +1183,10 @@ feature_cl_es_divergence_30
 ## Required logic
 
 - Rolling features are grouped by `session_segment_id`.
+- Rolling, lag, and count features must not compute through
+  `feature_input_valid=false` rows.
+- If any required lookback row is invalid, the derived feature value must be
+  `NaN`, not `false`, `0`, or a forward-filled value.
 - Session cumulative features reset by `session_segment_id` or valid session boundary.
 - Opening range features are unavailable until the opening range window is complete.
 - Volume relative-to-time-of-day features must use train-only references inside WFA or be implemented as fold-aware features.
@@ -1070,7 +1215,8 @@ feature_cl_es_divergence_30
 
 ## Purpose
 
-Freeze column roles for modeling and prevent obvious leakage.
+Audit, freeze, and promote the initial Phase 4 column registry for WFA so
+modeling cannot consume obvious leakage columns.
 
 ## Script
 
@@ -1152,6 +1298,9 @@ cost_provisional
 
 ## Build requirements
 
+- Start from the initial registry written by Phase 4.
+- Audit and freeze `feature_cols`, `target_cols`, `metadata_cols`, and
+  `excluded_cols` before WFA.
 - Use an allowlist-first feature registry where possible.
 - Fail hard if any target column appears in `feature_cols.json`.
 - Fail hard if any Databento metadata identifier appears in `feature_cols.json`.
@@ -1198,7 +1347,7 @@ test_days = 30
 step_days = 30
 purge_bars = auto
 resolved_purge_bars = entry_lag_bars + target_horizon_bars
-default resolved value = 16
+default resolved_purge_bars = 16
 ```
 
 ## Required fold fields
@@ -1239,11 +1388,12 @@ is_final_holdout
 
 ---
 
-# Phase 7 — Baseline WFA Train / Test
+# Phase 7A-7C — Staged Baseline WFA Train / Test
 
 ## Purpose
 
-Train the baseline model on each train fold and generate out-of-sample predictions for each test fold.
+Train staged baseline and challenger models on each train fold and generate
+out-of-sample predictions for each test fold.
 
 ## Script
 
@@ -1267,13 +1417,73 @@ reports/wfa/baseline_wfa_report.json
 
 ## Model policy
 
+```yaml
+Phase 7A linear controls:
+  ridge_return_v1:
+    model_family: ridge_regression
+    task: regression
+    target: target_ret_15m
+
+  logistic_direction_v1:
+    model_family: logistic_regression
+    task: classification
+    target: target_sign_with_deadzone
+
+  logistic_fade_success_v1:
+    model_family: logistic_regression
+    task: classification
+    target: target_fade_success_15m
+
+  logistic_trend_danger_v1:
+    model_family: logistic_regression
+    task: classification
+    target: target_trend_danger_30m
+
+Phase 7B nonlinear challengers:
+  histgb_direction_v1:
+    model_family: hist_gradient_boosting
+    task: classification
+    target: target_sign_with_deadzone
+
+  histgb_fade_success_v1:
+    model_family: hist_gradient_boosting
+    task: classification
+    target: target_fade_success_15m
+
+  histgb_trend_danger_v1:
+    model_family: hist_gradient_boosting
+    task: classification
+    target: target_trend_danger_30m
+
+Phase 7C optional serious nonlinear challengers:
+  lightgbm_*:
+    model_family: lightgbm
+    enabled_by_default: false
+    cpu_first: true
+
+  xgboost_*:
+    model_family: xgboost
+    enabled_by_default: false
+    cpu_first: true
+```
+
+Ridge/logistic are controls. HistGradientBoosting is the first nonlinear
+challenger. LightGBM/XGBoost are optional downstream challengers. Optional
+external dependencies must not be required for baseline tests to pass.
+
+Common rules:
+
 ```text
-model = Ridge baseline
 imputer = train-only
-scaler = train-only
+scaler = train-only where applicable
 fit = train fold only
 predict = test fold only
-hyperparameter tuning = disabled
+random train/test split = forbidden
+final-holdout tuning = forbidden
+hyperparameter tuning = disabled initially
+model_id = required in prediction and metric reports
+model_config_hash = required in prediction and metric reports
+feature_config_hash = required in prediction and metric reports
 ```
 
 ## Build requirements
@@ -1281,8 +1491,10 @@ hyperparameter tuning = disabled
 - Filter training rows to `causal_valid == true` and `target_valid == true`.
 - Fit imputer only on train fold.
 - Fit scaler only on train fold.
-- Fit model only on train fold.
+- Fit each model only on train fold.
 - Predict only test rows.
+- Record `model_id`, `model_family`, target name, model config hash, and feature
+  config hash for every prediction and metric row.
 - Save fold-level diagnostics.
 - Report prediction distribution and target distribution by fold.
 
@@ -1307,7 +1519,8 @@ hyperparameter tuning = disabled
 
 ## Purpose
 
-Write out-of-sample predictions with enough price and metadata columns for execution without unsafe joins.
+Write out-of-sample predictions with enough model, target, price, and metadata
+columns for execution without unsafe joins.
 
 ## Output
 
@@ -1321,35 +1534,52 @@ reports/wfa/baseline_predictions_manifest.json
 ```text
 market
 year
-ts
 fold_id
+timestamp
+session_id
+session_segment_id
 split_group
-y_pred
+model_id
+model_family
+target_name
+prediction_type
 y_true
-target_ret_15m
-target_ret_ticks_15m
-target_sign_15m
-target_sign_with_deadzone
-target_tradeable_after_cost
+y_pred_raw
+y_pred_calibrated
+p_long
+p_short
+p_flat
+p_fade_success
+p_trend_danger
+calibration_id
+model_config_hash
+feature_config_hash
+execution_open
+execution_close
 target_valid
 causal_valid
 close
 target_entry_ts
 target_exit_ts
-target_entry_price
-target_exit_price
-execution_price
-exit_price
-session_segment_id
 minutes_until_session_close
 ```
 
+`session_id` should be present when available; `session_segment_id` is required
+when session IDs are not available at prediction time.
+
 ## Build requirements
 
-- Predictions are unique by `market`, `ts`, and `fold_id`.
+- Predictions are unique by `market`, `timestamp`, `fold_id`, `model_id`, and
+  `target_name`.
 - Predictions are OOS only.
 - Execution price and exit price are included or derivable without rejoining raw data.
 - Invalid target rows are excluded from model scoring unless explicitly reported as skipped.
+- Regression models may leave probability columns null.
+- Classification models should populate relevant probability columns when
+  available.
+- Raw predictions and calibrated predictions must be preserved separately.
+- Position policy must consume calibrated or model-score fields, not blindly
+  trade raw predictions.
 
 ## Acceptance checks
 
@@ -1360,11 +1590,89 @@ minutes_until_session_close
 
 ---
 
+# Phase 8A — Signal Calibration and Model Comparison
+
+## Purpose
+
+Fit train-only calibration where configured, compare model candidates, and
+select research-period candidates without using final holdout.
+
+## Output
+
+```text
+reports/model_selection/model_comparison.csv
+reports/model_selection/model_selection_report.json
+reports/model_selection/calibration_report.json
+```
+
+## Calibration rules
+
+- Calibration is fit on train fold or a train-internal calibration split only.
+- Calibration cannot be fit on the test fold.
+- Calibration cannot use final holdout.
+- Calibration outputs must have `calibration_id`.
+- Raw model score and calibrated score must both be preserved.
+- Calibration can be skipped for a model, but the skip must be explicit in
+  reports.
+
+Allowed calibration approaches:
+
+```text
+none
+logistic/Platt style
+isotonic only if enough data and train-only fitting is enforced
+```
+
+## Model comparison grouping
+
+Reports must be grouped by:
+
+```text
+model_id
+model_family
+target_name
+market
+fold
+train/test window
+config hash
+```
+
+## Model comparison metrics
+
+Include where available:
+
+```text
+gross return
+net return
+gross Sharpe
+net Sharpe
+max drawdown
+turnover/bar
+trade count
+cost drag
+per-market metrics
+per-fold stability
+trend-day behavior
+fade-allowed vs fade-blocked behavior
+final-holdout excluded from selection
+```
+
+## Acceptance checks
+
+- Calibration report exists or each model has an explicit no-calibration marker.
+- Model comparison excludes final-holdout rows from selection.
+- `calibration_id`, `model_config_hash`, and `feature_config_hash` are reported.
+- Frozen model selection occurs before final holdout.
+
+---
+
 # Phase 9 — Baseline Execution + Cost Model
 
 ## Purpose
 
-Convert predictions into positions, compare deterministic position policies, charge realistic market-specific costs, and compute net returns in returns, ticks, and dollars.
+Convert calibrated model scores into positions, compare deterministic position
+policies, charge realistic market-specific costs, and compute net returns in
+returns, ticks, and dollars.
 
 ## Script
 
@@ -1390,8 +1698,13 @@ reports/execution/baseline_cost_report.json
 ## Required execution logic
 
 ```text
-raw prediction
--> signal threshold / no-trade band
+expected_return
+p_long
+p_short
+p_flat
+p_fade_success
+p_trend_danger
+-> deterministic signal threshold / no-trade band
 -> optional hysteresis
 -> optional minimum hold rule
 -> intraday flatten rule
@@ -1406,6 +1719,12 @@ raw prediction
 -> net_ticks
 -> net_dollars
 ```
+
+`p_trend_danger` can block fade trades. `p_fade_success` can allow or disallow
+fade trades. Raw return prediction alone should not directly become trades. A
+deterministic policy converts model scores into flat/long/short/size/add/no-add
+decisions, and all policy choices must be replayable from saved OOS predictions
+and config.
 
 ## Cost rule
 
@@ -1445,12 +1764,21 @@ cost_3x
 
 ```text
 market
-ts
+timestamp
 fold_id
 split_group
+model_id
+model_family
+target_name
 policy_name
 cost_scenario
-y_pred
+y_pred_raw
+y_pred_calibrated
+p_long
+p_short
+p_flat
+p_fade_success
+p_trend_danger
 signal
 position
 prev_position
@@ -1775,16 +2103,19 @@ rank using research-period train-fold-only information
 
 ---
 
-# Phase 15 — Frozen Feature + Policy Set
+# Phase 15 — Frozen Feature + Model + Calibration + Policy Set
 
 ## Purpose
 
-Freeze selected features and the selected execution policy before final evaluation.
+Freeze selected features, selected model config, calibration config, and the
+selected execution policy before final evaluation.
 
 ## Script
 
 ```bash
 python -m scripts.freeze_features --profile tier_1_core
+python -m scripts.freeze_model --profile tier_1_core
+python -m scripts.freeze_calibration --profile tier_1_core
 python -m scripts.freeze_policy --profile tier_1_core
 ```
 
@@ -1796,23 +2127,39 @@ data/frozen_features/phase5_v1/selected_features.csv
 data/frozen_features/phase5_v1/rejected_features.csv
 data/frozen_features/phase5_v1/policy_config.json
 data/frozen_features/phase5_v1/manifest.json
+
+data/frozen_models/phase5_v1/model_config.yaml
+data/frozen_models/phase5_v1/model_selection_report.json
+data/frozen_models/phase5_v1/calibration_config.yaml
+data/frozen_models/phase5_v1/manifest.json
 ```
 
 ## Build requirements
 
 - Frozen feature list is immutable during final WFA.
+- Frozen model config is immutable during final WFA.
+- Frozen calibration config is immutable during final WFA.
 - Frozen policy is immutable during final execution.
-- Manifest includes feature-selection report hash and policy-selection report hash.
-- Final WFA must consume only frozen features.
+- Manifests include feature-selection, model-selection, calibration, policy, and
+  config hashes.
+- Final WFA must consume only frozen features, frozen model config, and frozen
+  calibration config.
 - Final execution must consume only frozen policy unless running diagnostic comparison that is not used for the gate.
+- Final holdout cannot choose a model.
+- Final holdout cannot tune thresholds.
+- Final holdout cannot change calibration.
+- Final holdout cannot change features.
 
 ## Acceptance checks
 
 - Frozen feature files exist.
+- Frozen model files exist.
+- Frozen calibration files exist.
 - Frozen policy file exists.
 - Feature count is reported.
 - Frozen features match selected features.
-- Frozen policy was selected without final-holdout data.
+- Frozen model, calibration, and policy were selected without final-holdout data.
+- Frozen artifacts include config hashes.
 
 ---
 
@@ -1839,7 +2186,7 @@ reports/final_wfa/final_split_plan.json
 
 - Test windows must be inside `final_holdout_years`.
 - Training windows may use only data available before the test window.
-- Feature list and policy must already be frozen.
+- Feature list, model config, calibration config, and policy must already be frozen.
 - The split report must clearly mark all final-holdout folds.
 
 ## Acceptance checks
@@ -1859,7 +2206,7 @@ Evaluate the frozen feature set through the same causal WFA process on final hol
 ## Script
 
 ```bash
-python -m scripts.run_wfa --profile tier_1_core --matrix expanded --features data/frozen_features/phase5_v1/feature_cols.json --split-plan reports/final_wfa/final_split_plan.json --run final
+python -m scripts.run_wfa --profile tier_1_core --matrix expanded --features data/frozen_features/phase5_v1/feature_cols.json --model-config data/frozen_models/phase5_v1/model_config.yaml --calibration-config data/frozen_models/phase5_v1/calibration_config.yaml --split-plan reports/final_wfa/final_split_plan.json --run final
 ```
 
 ## Input
@@ -1867,6 +2214,8 @@ python -m scripts.run_wfa --profile tier_1_core --matrix expanded --features dat
 ```text
 data/feature_matrices/expanded/
 data/frozen_features/phase5_v1/feature_cols.json
+data/frozen_models/phase5_v1/model_config.yaml
+data/frozen_models/phase5_v1/calibration_config.yaml
 reports/final_wfa/final_split_plan.json
 ```
 
@@ -1883,8 +2232,10 @@ reports/final_wfa/final_wfa_report.json
 - Train-only imputer.
 - Train-only scaler.
 - Frozen features only.
+- Frozen model config only.
+- Frozen calibration config only.
 - Test-fold-only predictions.
-- No feature or policy changes after seeing final results.
+- No feature, model, calibration, or policy changes after seeing final results.
 
 ## Acceptance checks
 
@@ -1899,7 +2250,8 @@ reports/final_wfa/final_wfa_report.json
 
 ## Purpose
 
-Write final out-of-sample predictions with execution-ready columns.
+Write final out-of-sample predictions with the same multi-model schema and
+execution-ready columns as baseline OOS predictions.
 
 ## Output
 
@@ -1913,26 +2265,33 @@ reports/final_wfa/final_predictions_manifest.json
 ```text
 market
 year
-ts
 fold_id
+timestamp
+session_id
+session_segment_id
 split_group
-y_pred
+model_id
+model_family
+target_name
+prediction_type
 y_true
-target_ret_15m
-target_ret_ticks_15m
-target_sign_15m
-target_sign_with_deadzone
-target_tradeable_after_cost
+y_pred_raw
+y_pred_calibrated
+p_long
+p_short
+p_flat
+p_fade_success
+p_trend_danger
+calibration_id
+model_config_hash
+feature_config_hash
+execution_open
+execution_close
 target_valid
 causal_valid
 close
 target_entry_ts
 target_exit_ts
-target_entry_price
-target_exit_price
-execution_price
-exit_price
-session_segment_id
 minutes_until_session_close
 ```
 
@@ -1942,6 +2301,8 @@ minutes_until_session_close
 - Predictions are final-holdout test rows only.
 - No duplicate prediction rows.
 - Execution-ready prices exist.
+- Frozen model config hash and frozen feature config hash are present.
+- Calibration is frozen or explicitly marked as skipped.
 
 ---
 
@@ -1962,6 +2323,8 @@ python -m scripts.run_execution_costs --profile tier_1_core --run final --policy
 ```text
 data/predictions/final/oos_predictions.parquet
 data/frozen_features/phase5_v1/policy_config.json
+data/frozen_models/phase5_v1/model_config.yaml
+data/frozen_models/phase5_v1/calibration_config.yaml
 configs/costs.yaml
 ```
 
@@ -1976,6 +2339,7 @@ reports/final_execution/final_cost_report.json
 
 - Same cost model as baseline unless versioned.
 - Frozen execution policy only for gate metrics.
+- Frozen model and calibration outputs only.
 - Same intraday flatten rule.
 - No overnight positions.
 - Report cost stress scenarios, but do not choose a new policy from final stress results.
@@ -1985,7 +2349,7 @@ reports/final_execution/final_cost_report.json
 - Final execution artifact exists.
 - Costs reconcile.
 - No positions remain open after cutoff.
-- Frozen policy was used for final gate metrics.
+- Frozen model, calibration, and policy were used for final gate metrics.
 
 ---
 
@@ -2273,6 +2637,14 @@ opening range does not leak before completion
 volume relative-to-time-of-day does not use final-holdout full-sample averages
 forbidden columns excluded from feature_cols
 WFA purge enforcement
+model registry validation
+purge auto-resolution
+target group exclusion from features
+multi-model prediction schema
+calibration train-only discipline
+model selection excludes final holdout
+frozen model immutability
+project layout downstream ML consistency
 research/final-holdout separation
 train-only imputer/scaler
 train-only feature selection
@@ -2329,7 +2701,7 @@ Primary changes to implement now:
 
 ```text
 1. Add or update the Pipeline Structure Overview section in project_layout.md.
-2. Keep raw input as data/raw/{market}/{year}.parquet with Databento OHLCV schema.
+2. Keep Phase 1 as DBN archive plus DBN-to-parquet stitch, ending at data/raw/{market}/{year}.parquet with the strict Databento OHLCV schema.
 3. Keep `scripts.phase2_causal_base.build_causal_base_data` as the single validation/session-normalization/causal-gating module.
 4. Add roll-window flags and roll-window label invalidation.
 5. Add cost-aware target columns in ticks and dollars.

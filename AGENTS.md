@@ -4,6 +4,16 @@ Respond token-efficiently. Correctness and reproducibility > concision.
 
 Primary rule: do exactly the requested task with the smallest safe change.
 
+Communication/token policy:
+
+* Do not narrate progress.
+* Do not restate the task.
+* Keep intermediate messages under 20 words unless reporting a blocker.
+* Prefer targeted searches/snippets over full-file reads.
+* Do not dump long logs, full files, or full diffs unless required.
+* Report only: blockers, files changed, commands run, validation result, metric/schema/row-count changes, and unresolved risks.
+* If a broad read/search would consume lots of context, narrow it first or ask.
+
 Hard safety rules:
 
 * Do not stage, commit, or intentionally preserve generated artifacts: parquet, dbn, zst, generated csv/json reports, logs, cache files, model pickles, or large data outputs.

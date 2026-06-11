@@ -1,0 +1,265 @@
+version: 1
+
+policy:
+  random_splits_allowed: false
+  final_holdout_tuning_allowed: false
+  neural_nets_allowed: false
+  transformers_allowed: false
+  reinforcement_learning_allowed: false
+  hyperparameter_tuning_allowed_initially: false
+  optional_external_model_dependencies_required: false
+
+purge:
+  entry_lag_bars: 1
+  target_horizon_bars: 15
+  purge_bars: auto
+  resolved_purge_bars: 16
+
+approved_initial_model_families:
+  - ridge_return
+  - logistic_direction
+  - logistic_fade_success
+  - logistic_trend_danger
+  - hist_gradient_boosting_direction
+  - hist_gradient_boosting_fade_success
+  - hist_gradient_boosting_trend_danger
+  - lightgbm_direction_optional
+  - xgboost_direction_optional
+
+target_groups:
+  return_target:
+    - target_ret_15m
+    - target_ret_ticks_15m
+    - target_net_ticks_after_est_cost
+    - target_net_dollars_after_est_cost
+
+  direction_target:
+    - target_sign_15m
+    - target_sign_with_deadzone
+    - target_tradeable_after_cost
+
+  fade_success_target:
+    - target_fade_long_success_15m
+    - target_fade_short_success_15m
+    - target_fade_success_15m
+
+  trend_danger_target:
+    - target_trend_danger_long_30m
+    - target_trend_danger_short_30m
+    - target_trend_danger_30m
+
+feature_exclusion:
+  target_only_groups:
+    - return_target
+    - direction_target
+    - fade_success_target
+    - trend_danger_target
+  forbidden_feature_prefixes:
+    - target_
+  forbidden_feature_targets:
+    - target_fade_long_success_15m
+    - target_fade_short_success_15m
+    - target_fade_success_15m
+    - target_trend_danger_long_30m
+    - target_trend_danger_short_30m
+    - target_trend_danger_30m
+
+model_stages:
+  phase_7a_linear_controls:
+    required: true
+    description: "Linear control models used as the first honest benchmark."
+
+  phase_7b_sklearn_nonlinear:
+    required: false
+    description: "First nonlinear challenger using sklearn histogram gradient boosting."
+
+  phase_7c_optional_boosted_trees:
+    required: false
+    description: "Optional LightGBM/XGBoost challengers, CPU-first."
+
+models:
+  ridge_return_v1:
+    stage: phase_7a_linear_controls
+    family: ridge_regression
+    task: regression
+    target: target_ret_15m
+    enabled: true
+    requires_optional_dependency: false
+
+  logistic_direction_v1:
+    stage: phase_7a_linear_controls
+    family: logistic_regression
+    task: classification
+    target: target_sign_with_deadzone
+    enabled: true
+    requires_optional_dependency: false
+
+  logistic_fade_success_v1:
+    stage: phase_7a_linear_controls
+    family: logistic_regression
+    task: classification
+    target: target_fade_success_15m
+    enabled: true
+    requires_optional_dependency: false
+
+  logistic_trend_danger_v1:
+    stage: phase_7a_linear_controls
+    family: logistic_regression
+    task: classification
+    target: target_trend_danger_30m
+    enabled: true
+    requires_optional_dependency: false
+
+  histgb_direction_v1:
+    stage: phase_7b_sklearn_nonlinear
+    family: hist_gradient_boosting
+    task: classification
+    target: target_sign_with_deadzone
+    enabled: false
+    requires_optional_dependency: false
+
+  histgb_fade_success_v1:
+    stage: phase_7b_sklearn_nonlinear
+    family: hist_gradient_boosting
+    task: classification
+    target: target_fade_success_15m
+    enabled: false
+    requires_optional_dependency: false
+
+  histgb_trend_danger_v1:
+    stage: phase_7b_sklearn_nonlinear
+    family: hist_gradient_boosting
+    task: classification
+    target: target_trend_danger_30m
+    enabled: false
+    requires_optional_dependency: false
+
+  lightgbm_direction_v1:
+    stage: phase_7c_optional_boosted_trees
+    family: lightgbm
+    task: classification
+    target: target_sign_with_deadzone
+    enabled: false
+    cpu_first: true
+    requires_optional_dependency: true
+
+  xgboost_direction_v1:
+    stage: phase_7c_optional_boosted_trees
+    family: xgboost
+    task: classification
+    target: target_sign_with_deadzone
+    enabled: false
+    cpu_first: true
+    requires_optional_dependency: true
+
+prediction_schema:
+  required_columns:
+    - market
+    - year
+    - fold_id
+    - timestamp
+    - session_segment_id
+    - model_id
+    - model_family
+    - target_name
+    - prediction_type
+    - y_true
+    - y_pred_raw
+    - y_pred_calibrated
+    - p_long
+    - p_short
+    - p_flat
+    - p_fade_success
+    - p_trend_danger
+    - calibration_id
+    - model_config_hash
+    - feature_config_hash
+    - execution_open
+    - execution_close
+    - target_valid
+  optional_columns:
+    - session_id
+  primary_key:
+    - market
+    - year
+    - fold_id
+    - timestamp
+    - model_id
+    - target_name
+  raw_and_calibrated_scores_separate: true
+  regression_probability_columns_nullable: true
+
+calibration:
+  allowed_methods:
+    - none
+    - platt
+    - isotonic
+  fit_scope: train_fold_or_train_internal_only
+  test_fold_fit_allowed: false
+  final_holdout_fit_allowed: false
+  calibration_id_required: true
+  no_calibration_marker: no_calibration
+  preserve_raw_and_calibrated_scores: true
+
+model_selection_reports:
+  artifacts:
+    - reports/model_selection/model_comparison.csv
+    - reports/model_selection/model_selection_report.json
+    - reports/model_selection/calibration_report.json
+  group_by:
+    - model_id
+    - model_family
+    - target_name
+    - market
+    - fold
+    - train_window
+    - test_window
+    - model_config_hash
+    - feature_config_hash
+  include_metrics_where_available:
+    - gross_return
+    - net_return
+    - gross_sharpe
+    - net_sharpe
+    - max_drawdown
+    - turnover_per_bar
+    - trade_count
+    - cost_drag
+    - per_market_metrics
+    - per_fold_stability
+    - trend_day_behavior
+    - fade_allowed_vs_fade_blocked_behavior
+  final_holdout_excluded_from_selection: true
+
+position_policy:
+  inputs:
+    - expected_return
+    - p_long
+    - p_short
+    - p_flat
+    - p_fade_success
+    - p_trend_danger
+  p_trend_danger_blocks_fade_trades: true
+  p_fade_success_allows_fade_trades: true
+  raw_return_prediction_direct_trading_allowed: false
+  deterministic_policy_required: true
+  replayable_from_saved_predictions_and_config: true
+
+frozen_set:
+  feature_artifacts:
+    - data/frozen_features/phase5_v1/feature_cols.json
+    - data/frozen_features/phase5_v1/selected_features.csv
+    - data/frozen_features/phase5_v1/rejected_features.csv
+    - data/frozen_features/phase5_v1/policy_config.json
+    - data/frozen_features/phase5_v1/manifest.json
+  model_artifacts:
+    - data/frozen_models/phase5_v1/model_config.yaml
+    - data/frozen_models/phase5_v1/model_selection_report.json
+    - data/frozen_models/phase5_v1/calibration_config.yaml
+    - data/frozen_models/phase5_v1/manifest.json
+  final_holdout_consumes_frozen_only: true
+  final_holdout_model_selection_allowed: false
+  final_holdout_threshold_tuning_allowed: false
+  final_holdout_calibration_change_allowed: false
+  final_holdout_feature_change_allowed: false
+  config_hashes_required: true

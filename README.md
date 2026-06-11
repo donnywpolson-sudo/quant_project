@@ -26,11 +26,17 @@ Set-Content -Path .\databento.env -Value 'DATABENTO_API_KEY="YOUR_KEY"' -Encodin
 The raw downloader only reads `DATABENTO_API_KEY` from that file. `databento.env` is git-ignored.
 It also accepts a raw key as the only non-comment line in `databento.env`.
 
-## Raw Data Download
+## Raw Data Ingest
 
 Canonical implementation: `scripts/raw_ingest/download_databento_raw.py`.
 
-Raw files are written as:
+Phase 1A archives Databento DBN/DBN.ZST chunks:
+
+```text
+data/dbn/{market}/{year}/...dbn.zst
+```
+
+Phase 1B converts and stitches DBN chunks into immutable raw parquet:
 
 ```text
 data/raw/{market}/{year}.parquet
@@ -57,7 +63,7 @@ Operational profiles live in `configs/alpha_tiered.yaml`.
 ```text
 tier_0 = smoke test
 tier_1 = CL/ES/ZN machinery proof set
-tier_2 = exact 27-market GLBX-only real universe
+tier_2 = exact 28-market GLBX-only real universe, including VX
 all_raw = inventory only
 metadata_optional_test = unit-test only
 ```
@@ -66,7 +72,7 @@ Default profile: `tier_1_core_recent`.
 
 Use `tier_1_core` for current Phase 1-4 debugging. `tier_1` results do not
 prove `tier_2` performance; `tier_2` is the actual research universe. Missing
-tier-2 data should fail stage validation clearly, not silently shrink the
+Tier-2 data must fail stage validation clearly, not silently shrink the
 universe.
 
 ## Causal Base

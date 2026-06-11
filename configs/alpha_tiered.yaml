@@ -26,6 +26,7 @@ defaults:
   target_horizon_bars: 15
   trend_horizon_bars: 30
   purge_bars: auto
+  resolved_purge_bars: 16
 
   roll_window_bars: 15
   max_synthetic_gap_minutes: 120
