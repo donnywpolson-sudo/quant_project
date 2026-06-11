@@ -11,9 +11,9 @@ C:\Users\donny\Desktop\quant_project
 Mission:
 Try to prove this target fails using evidence from the repo. Assume the code may be wrong, the backtest may be misleading, the data may be flawed, labels may be unrealistic, and any apparent edge is theoretical until proven.
 
-But do not hallucinate, overreach, or endlessly invent theoretical problems. Separate real blockers from acceptable research limitations.
+But do not hallucinate, overreach, or invent endless theoretical problems. Separate real blockers from acceptable research limitations. The goal is not perfection. The goal is to decide whether this target is safe enough for the next downstream step.
 
-Use the scientific method:
+Scientific stance:
 
 * Null hypothesis: there is no tradable alpha.
 * Burden of proof is on the pipeline.
@@ -35,29 +35,29 @@ Context:
 * Continuous contracts are research series, not directly tradeable instruments.
 
 Scope rule:
-Audit the specified target only. Inspect upstream/downstream files only if required to prove schema compatibility, causality, leakage, artifact validity, or gate correctness. Do not expand into a generic full-project audit.
+Audit the specified target only. Inspect upstream/downstream files only if required to prove schema compatibility, causality, leakage, artifact validity, target coverage, or gate correctness. Do not expand into a generic full-project audit.
 
 Evidence rules:
 
-* Inspect actual files, reports, tests, manifests, and artifacts.
+* Inspect actual files, reports, tests, manifests, configs, and artifacts.
 * Do not rely on summaries.
 * Do not assume reports are current.
-* If evidence is missing, say “not auditable” or “missing evidence.”
+* If evidence is missing, say "not auditable" or "missing evidence."
 * Do not invent metrics.
 * Do not speculate beyond what would realistically affect this project.
-* Label each issue as: BLOCKER, MATERIAL RISK, RESEARCH LIMITATION, or DEFER.
-* Do not recommend fixing DEFER items now.
+* Separate evidence-backed failures from acceptable research limitations.
 * Do not keep finding theoretical problems after the target is good enough for the next pipeline stage.
 
-Practicality rule:
-The goal is not perfection. The goal is to decide whether this target is safe enough for the next downstream step.
+Severity meanings:
 
-Use this severity standard:
+BLOCKER:
+Must fix before next phase.
 
-* BLOCKER: must fix before downstream work.
-* MATERIAL RISK: should fix soon or add a hard gate/report.
-* RESEARCH LIMITATION: acceptable for research if clearly reported.
-* DEFER: real issue, but not worth fixing at this phase.
+IMPORTANT:
+Should fix soon, but can proceed only if stated limitations are acceptable.
+
+LATER:
+Real issue, but not blocking the next phase.
 
 Core assumptions to attack:
 
@@ -93,7 +93,7 @@ Attack categories only if relevant to the target:
 * live deployment mismatch
 * stale data / bad contract mapping
 
-For this target, answer:
+Internal audit questions:
 
 1. How could this create fake alpha?
 2. How could it silently break?
@@ -106,44 +106,116 @@ For this target, answer:
 9. What evidence would be required before trusting it?
 10. What would make you refuse to continue downstream?
 
+Preserve the adversarial checks internally, but make the final answer simple, practical, and directly actionable.
+
 Required output:
 
-1. Verdict: Pass / Warn / Fail / Not implemented / Not auditable
-2. Safe to proceed to next phase? Yes / No / Yes with stated limitations
-3. Scope audited and dependencies inspected
-4. Scientific null hypothesis result:
+# Verdict
 
-   * rejected?
-   * not rejected?
-   * not testable yet?
-5. Findings table:
+PASS / WARN / FAIL / NOT AUDITABLE
 
-   * severity
-   * issue
-   * evidence
-   * why it matters
-   * minimum fix
-   * fix now? yes/no
-6. Missing tests that matter now
-7. Exact diagnostics to run
-8. Minimum patch plan
-9. Deferred issues, explicitly marked
-10. Hard gates before downstream work
-11. Final statement:
+# Can I continue?
 
-* most likely reason this target fails
-* most dangerous hidden assumption
-* highest-value diagnostic
-* evidence needed before trust
-* whether to proceed
+YES / NO / YES, but only with these limits: ...
+
+# Problems to fix now
+
+For each blocking/current issue:
+
+## Problem N - <plain English title>
+
+Severity: BLOCKER / IMPORTANT / LATER
+
+What is wrong:
+<1-3 plain English sentences>
+
+Why it matters:
+<1-2 plain English sentences>
+
+Where:
+<exact file/function/line if available>
+
+How to fix:
+<direct patch plan, not theory>
+
+How to verify:
+<exact command or diagnostic>
+
+# Problems to ignore for now
+
+List only real issues that do not block the next phase.
+
+# Exact next Codex prompt
+
+Give one paste-ready Codex prompt that fixes only the blocking/current issues.
+
+# Stop
+
+FAIL output rule:
+
+If the audit verdict is FAIL, output only:
+
+* the blocking problems
+* the minimum fixes
+* the verification commands
+* one exact patch prompt
+
+Do not include future-phase commentary unless it changes the immediate fix.
+
+Do not include:
+
+* long scientific-method sections
+* null hypothesis tables
+* broad future-phase warnings
+* generic quant advice
+* repeated context
+* theoretical issues that do not block the next phase
+* large findings tables unless the user explicitly asks for the full audit report
+
+Example output shape:
+
+# Verdict
+
+FAIL
+
+# Can I continue?
+
+NO.
+
+# Problems to fix now
+
+## Problem 1 - Rolling features use invalid lookbacks
+
+Severity: BLOCKER
+
+What is wrong:
+Some rolling features compute through synthetic or invalid rows.
+
+Why it matters:
+Invalid rows can become false/zero instead of NaN, creating fake regime features.
+
+Where:
+scripts/phase4_features/build_baseline_features.py
+
+How to fix:
+Require full valid lookback windows. If any row in the lookback is invalid, output NaN.
+
+How to verify:
+Run the invalid-lookback artifact diagnostic and require contaminated row counts to be 0.
+
+# Exact next Codex prompt
+
+<patch prompt>
+
+# Stop
 
 Output style:
 
 * Compact.
+* Plain English.
 * No praise.
 * No generic advice.
 * No model complexity or tuning suggestions.
-* Prefer tables.
 * Use exact paths and commands.
 * Be adversarial but realistic.
 * Stop after the audit.
