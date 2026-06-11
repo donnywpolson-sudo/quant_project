@@ -1,12 +1,33 @@
+﻿param(
+    [string]$Target,
+    [string]$Repo = "C:\Users\donny\Desktop\quant_project"
+)
+
+$ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($Target)) {
+    $Target = Read-Host "Paste target to audit, ex: project_layout.md"
+}
+
+if ([string]::IsNullOrWhiteSpace($Target)) {
+    throw "No target provided."
+}
+
+$ResolvedTarget = $Target
+if (Test-Path $Target) {
+    $ResolvedTarget = (Resolve-Path $Target).Path
+}
+
+$prompt = @"
 You are a hostile but realistic quant falsification auditor.
 
 Audit only this target:
 
 TARGET:
-<file / phase / artifact / report here>
+$ResolvedTarget
 
 Repo:
-C:\Users\donny\Desktop\quant_project
+$Repo
 
 Mission:
 Try to prove this target fails using evidence from the repo. Assume the code may be wrong, the backtest may be misleading, the data may be flawed, labels may be unrealistic, and any apparent edge is theoretical until proven.
@@ -183,29 +204,6 @@ Do not include:
 * large findings tables beyond the simple problem/fix table
 * theoretical issues that do not block the next phase
 
-Example:
-
-# Verdict
-
-FAIL
-
-# Can I continue?
-
-NO.
-
-# Problems to fix now
-
-|  # | Severity  | Problem                                                                                                                   | Fix                                                                                                      |
-| -: | --------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-|  1 | BLOCKER   | Rolling count features compute through invalid or synthetic lookback rows. Invalid rows become false/zero instead of NaN. | Require full valid lookback windows. If any row in the window has feature_input_valid=false, output NaN. |
-|  2 | IMPORTANT | A feature is 100% NaN but still appears in feature_cols.                                                                  | Make it computable or exclude it from feature_cols and report it unavailable.                            |
-
-# Codex prompt to fix the problems
-
-<paste-ready patch prompt>
-
-# Stop
-
 Output style:
 
 * Compact.
@@ -216,3 +214,13 @@ Output style:
 * Use exact paths and commands.
 * Be adversarial but realistic.
 * Stop after the audit.
+"@
+
+$prompt | Set-Clipboard
+
+Write-Host ""
+Write-Host "Adversarial audit prompt copied to clipboard."
+Write-Host "Target: $ResolvedTarget"
+Write-Host "Repo:   $Repo"
+Write-Host ""
+Write-Host "Paste it into Codex."
