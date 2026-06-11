@@ -35,8 +35,8 @@ Phase 1B implementation: `scripts/phase1B_convert/convert_databento_raw.py`.
 Phase 1A archives Databento DBN/DBN.ZST chunks:
 
 ```text
-data/raw/databento/ohlcv_1m/{market}/{year}.dbn.zst
-data/raw/databento/definition/{market}/{year}.dbn.zst
+data/raw/{market}/{year}.dbn.zst
+data/raw/definition/{market}/{year}.dbn.zst
 ```
 
 Phase 1B converts and stitches DBN chunks into immutable raw parquet:

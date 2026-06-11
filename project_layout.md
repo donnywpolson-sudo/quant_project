@@ -34,8 +34,8 @@ Phase 1 is a two-step raw-ingest workflow:
 DBN archive path pattern:
 
 ```text
-data/raw/databento/ohlcv_1m/{market}/{year}.dbn.zst
-data/raw/databento/definition/{market}/{year}.dbn.zst
+data/raw/{market}/{year}.dbn.zst
+data/raw/definition/{market}/{year}.dbn.zst
 ```
 
 Raw parquet path pattern:
@@ -225,7 +225,7 @@ This is the realistic operational pipeline. The old 27-stage checklist is preser
 
 | Phase | Name | Main artifact | Purpose |
 |---:|---|---|---|
-| 1A | DBN Archive | `data/raw/databento/{ohlcv_1m,definition}/{market}/{year}.dbn.zst` | Download and archive immutable Databento OHLCV and definition DBN/DBN.ZST market-year chunks. |
+| 1A | DBN Archive | `data/raw/{market}/{year}.dbn.zst` | Download and archive immutable Databento OHLCV DBN/DBN.ZST market-year chunks. |
 | 1B | Raw Parquet Stitch | `data/raw/{market}/{year}.parquet` | Validate OHLCV plus definition DBN chunks and convert market-year OHLCV chunks into immutable parquet. |
 | 2 | Causal Base Builder | `data/causally_gated_normalized/{market}/{year}.parquet` | Validate, session-normalize, roll-flag, synthetic-mark, and causally gate raw bars. |
 | 3 | Target / Label Generation | `data/labeled/{market}/{year}.parquet` | Build next-bar-entry 15-minute labels with cost-aware and intraday validity flags. |
@@ -269,8 +269,8 @@ Old stages 24-27 -> Phase 16-22: final holdout, final WFA, final predictions, fi
 ### Core artifact flow
 
 ```text
-data/raw/databento/ohlcv_1m/{market}/{year}.dbn.zst
-data/raw/databento/definition/{market}/{year}.dbn.zst
+data/raw/{market}/{year}.dbn.zst
+data/raw/definition/{market}/{year}.dbn.zst
 -> data/raw/{market}/{year}.parquet
 -> data/causally_gated_normalized/{market}/{year}.parquet
 -> data/labeled/{market}/{year}.parquet
@@ -662,8 +662,8 @@ per market/year.
 DBN archive:
 
 ```text
-data/raw/databento/ohlcv_1m/{market}/{year}.dbn.zst
-data/raw/databento/definition/{market}/{year}.dbn.zst
+data/raw/{market}/{year}.dbn.zst
+data/raw/definition/{market}/{year}.dbn.zst
 ```
 
 Raw parquet output:

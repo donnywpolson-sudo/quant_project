@@ -368,7 +368,7 @@ def task_output_path(
     raw_format: str,
 ) -> str:
     if mode in DBN_DOWNLOAD_MODES:
-        schema_root = output_root / VENDOR / schema_path_name(schema)
+        schema_root = output_root if schema == SCHEMA else output_root / schema_path_name(schema)
         if chunk == "none":
             label = f"{start}_to_{end}"
             return (schema_root / product / f"{label}.dbn.zst").as_posix()
@@ -1070,14 +1070,14 @@ def infer_dbn_archive_entry(path: Path, dbn_root: Path) -> DbnArchiveEntry:
         if schema_dir and schema_dir != schema_path_name("ohlcv-1m"):
             raise ValueError(
                 "cannot infer market/year from DBN path; expected "
-                "data/raw/databento/ohlcv_1m/{market}/{year}.dbn.zst"
+                "data/raw/{market}/{year}.dbn.zst"
             )
         year_text = filename.removesuffix(".dbn.zst").removesuffix(".dbn")
         if year_text.isdigit():
             return DbnArchiveEntry(path=path, product=product, year=int(year_text))
     raise ValueError(
         "cannot infer market/year from DBN path; expected "
-        "data/raw/databento/ohlcv_1m/{market}/{year}.dbn.zst"
+        "data/raw/{market}/{year}.dbn.zst"
     )
 
 
@@ -1119,8 +1119,10 @@ def definition_path_for_group(dbn_root: Path, product: str, year: int) -> Path:
     elif dbn_root.name == VENDOR:
         base = dbn_root / schema_path_name("definition")
     else:
-        base = dbn_root / VENDOR / schema_path_name("definition")
-    return base / product / f"{year}.dbn.zst"
+        base = dbn_root / schema_path_name("definition")
+    path = base / product / f"{year}.dbn.zst"
+    legacy_path = dbn_root / VENDOR / schema_path_name("definition") / product / f"{year}.dbn.zst"
+    return legacy_path if legacy_path.exists() and not path.exists() else path
 
 
 def definition_frame_for_group(dbn_root: Path, product: str, year: int) -> tuple[pd.DataFrame, Path]:
@@ -2169,13 +2171,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  # Default raw DBN/Zstd batch output under data/raw/databento/{schema}/{market}/{year}.dbn.zst.
+  # Default raw OHLCV DBN/Zstd batch output under data/raw/{market}/{year}.dbn.zst.
   python scripts\\phase1A_download\\download_databento_raw.py --markets ES,NQ --start 2023-01-01 --end 2024-01-01 --workers 1 --resume
 
   # Fast planning check with monthly chunks and no API calls.
   python scripts\\phase1A_download\\download_databento_raw.py --markets ES,NQ --start 2023-01-01 --end 2023-03-01 --chunk month --dry-run
 
-  # Convert already-downloaded data/raw/databento/ohlcv_1m/{market}/{year}.dbn.zst to data/raw/{market}/{year}.parquet.
+  # Convert already-downloaded data/raw/{market}/{year}.dbn.zst to data/raw/{market}/{year}.parquet.
   python scripts\\phase1B_convert\\convert_databento_raw.py --dbn-root data/raw --raw-root data/raw
 
   # Intentional old behavior: immediate yearly Parquet stream output under data/raw.
@@ -2189,7 +2191,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--symbols", "--markets", dest="symbols", help="Comma-separated product roots, e.g. ES,NQ,CL")
     parser.add_argument("--dataset", help=f"Override dataset for every requested market; only {CME_DATASET} is allowed")
-    parser.add_argument("--schema", choices=[*REQUIRED_SCHEMAS, "all"], default="all")
+    parser.add_argument("--schema", choices=[*REQUIRED_SCHEMAS, "all"], default=SCHEMA)
     parser.add_argument("--stype-in", default=STYPE_IN, help="Default continuous. Use parent for symbols like ES.FUT.")
     parser.add_argument("--stype-out", default=STYPE_OUT)
     parser.add_argument("--start", help="Inclusive start date, e.g. 2023-01-01. Overrides --start-year.")
