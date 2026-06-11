@@ -21,8 +21,10 @@ from scripts.raw_ingest.download_databento_raw import (
     condition_is_degraded,
     dataset_for_product,
     execute_download,
+    execute_batch_downloads,
     estimate_cost,
     first_pending_download,
+    iter_range_tasks,
     is_fatal_error,
     iter_month_ranges,
     iter_year_tasks,
@@ -31,6 +33,7 @@ from scripts.raw_ingest.download_databento_raw import (
     parse_symbols,
     preflight_auth,
     resolve_databento_api_key,
+    symbol_for_product,
     store_to_required_dataframe,
     validate_download,
     write_store_parquet,
@@ -128,6 +131,34 @@ class AuthFailingPreflightClient:
     metadata = AuthFailingPreflightMetadata()
 
 
+class FakeBatch:
+    def __init__(self) -> None:
+        self.submissions: list[dict[str, object]] = []
+        self.downloads: list[dict[str, object]] = []
+
+    def submit_job(self, **kwargs: object) -> dict[str, object]:
+        self.submissions.append(kwargs)
+        return {"id": "job-test", "state": "queued"}
+
+    def list_jobs(self, **kwargs: object) -> list[dict[str, object]]:
+        return [{"id": "job-test", "state": "done"}]
+
+    def download(self, **kwargs: object) -> list[Path]:
+        self.downloads.append(kwargs)
+        output_dir = Path(str(kwargs["output_dir"]))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / "job-test.dbn.zst"
+        path.write_bytes(b"dbn-zstd-placeholder")
+        return [path]
+
+
+class FakeBatchClient:
+    def __init__(self) -> None:
+        self.batch = FakeBatch()
+        self.metadata = FailingMetadata()
+        self.timeseries = FailingTimeseries()
+
+
 def test_parse_symbols_current_and_extended() -> None:
     assert parse_symbols(None, "current20") == CURRENT_20
     assert "ES" in parse_symbols(None, "extended_cme")
@@ -147,9 +178,49 @@ def test_default_output_is_pipeline_raw_root() -> None:
     assert args.out == "data/raw"
 
 
+def test_new_speedup_args_parse_without_breaking_existing_defaults() -> None:
+    args = build_arg_parser().parse_args(
+        [
+            "--dataset",
+            "GLBX.MDP3",
+            "--schema",
+            "ohlcv-1m",
+            "--markets",
+            "ES,NQ",
+            "--start",
+            "2023-01-01",
+            "--end",
+            "2023-03-01",
+            "--chunk",
+            "month",
+            "--mode",
+            "batch",
+            "--workers",
+            "4",
+            "--raw-format",
+            "dbn-zstd",
+            "--resume",
+        ]
+    )
+
+    assert args.symbols == "ES,NQ"
+    assert args.dataset == "GLBX.MDP3"
+    assert args.chunk == "month"
+    assert args.mode == "batch"
+    assert args.workers == 4
+    assert args.raw_format == "dbn-zstd"
+    assert args.resume is True
+
+
 def test_continuous_requests_use_supported_output_symbology() -> None:
     assert STYPE_IN == "continuous"
     assert STYPE_OUT == "instrument_id"
+
+
+def test_symbol_for_product_preserves_continuous_default_and_supports_parent() -> None:
+    assert symbol_for_product("ES", "continuous") == "ES.v.0"
+    assert symbol_for_product("ES", "parent") == "ES.FUT"
+    assert symbol_for_product("ESM4", "raw_symbol") == "ESM4"
 
 
 def test_normalize_api_key_strips_wrapping_noise() -> None:
@@ -268,6 +339,61 @@ def test_iter_month_ranges_uses_calendar_months_and_clips_edges() -> None:
     ]
 
 
+def test_iter_range_tasks_builds_month_stream_jobs_without_daily_requests(
+    tmp_path: Path,
+) -> None:
+    tasks = iter_range_tasks(
+        ["ES"],
+        start="2024-01-15",
+        end="2024-04-10",
+        output_root=tmp_path / "raw",
+        chunk="month",
+        schema="ohlcv-1m",
+        stype_in="continuous",
+        stype_out="instrument_id",
+    )
+
+    assert [(task.start, task.end) for task in tasks] == [
+        ("2024-01-15", "2024-02-01"),
+        ("2024-02-01", "2024-03-01"),
+        ("2024-03-01", "2024-04-01"),
+        ("2024-04-01", "2024-04-10"),
+    ]
+    assert [Path(task.output_path).name for task in tasks] == [
+        "2024-01.parquet",
+        "2024-02.parquet",
+        "2024-03.parquet",
+        "2024-04.parquet",
+    ]
+
+
+def test_iter_range_tasks_builds_batch_dbn_zstd_jobs_with_parent_symbols(
+    tmp_path: Path,
+) -> None:
+    tasks = iter_range_tasks(
+        ["ES", "VX"],
+        start="2024-01-01",
+        end="2024-03-01",
+        output_root=tmp_path / "raw_databento",
+        chunk="month",
+        mode="batch",
+        raw_format="dbn-zstd",
+        dataset="GLBX.MDP3",
+        stype_in="parent",
+    )
+
+    assert len(tasks) == 4
+    assert {task.dataset for task in tasks} == {"GLBX.MDP3"}
+    assert tasks[0].symbol == "ES.FUT"
+    assert tasks[0].raw_format == "dbn-zstd"
+    assert Path(tasks[0].output_path).parts[-4:] == (
+        "raw_databento",
+        "GLBX.MDP3",
+        "ES",
+        "2024-01",
+    )
+
+
 def test_first_pending_download_skips_existing_files(tmp_path: Path) -> None:
     existing = tmp_path / "raw" / "ES" / "2024.parquet"
     missing = tmp_path / "raw" / "ES" / "2025.parquet"
@@ -296,6 +422,23 @@ def test_first_pending_download_skips_existing_files(tmp_path: Path) -> None:
 
     assert first_pending_download(tasks, overwrite=False) == tasks[1]
     assert first_pending_download(tasks, overwrite=True) == tasks[0]
+
+
+def test_first_pending_download_does_not_skip_empty_final_file(tmp_path: Path) -> None:
+    empty = tmp_path / "raw" / "ES" / "2024.parquet"
+    empty.parent.mkdir(parents=True)
+    empty.write_bytes(b"")
+    task = DownloadTask(
+        CME_DATASET,
+        "ES",
+        2024,
+        "2024-01-01",
+        "2025-01-01",
+        "ES.v.0",
+        empty.as_posix(),
+    )
+
+    assert first_pending_download([task], overwrite=False) == task
 
 
 def test_preflight_auth_fails_fast_on_auth_error(tmp_path: Path) -> None:
@@ -612,6 +755,40 @@ def test_execute_download_downloads_months_and_splits_retryable_month_failure(
     df = pd.read_parquet(path)
     assert df["ts_event"].iloc[0] == pd.Timestamp("2014-01-01T15:00:00Z")
     assert df["ts_event"].iloc[-1] == pd.Timestamp("2014-12-01T15:00:00Z")
+
+
+def test_execute_batch_download_writes_temp_dir_then_final_output(tmp_path: Path) -> None:
+    client = FakeBatchClient()
+    task = DownloadTask(
+        dataset=CME_DATASET,
+        product="ES",
+        year=2024,
+        start="2024-01-01",
+        end="2024-02-01",
+        symbol="ES.v.0",
+        output_path=(tmp_path / "raw_databento" / CME_DATASET / "ES" / "2024-01").as_posix(),
+        chunk="month",
+        raw_format="dbn-zstd",
+    )
+
+    results = execute_batch_downloads(
+        [task],
+        overwrite=False,
+        workers=1,
+        client_factory=lambda: client,
+        convert_parquet=False,
+        batch_wait_timeout_seconds=1.0,
+        batch_poll_seconds=0.01,
+    )
+
+    final_dir = Path(task.output_path)
+    assert results[0]["status"] == "ok"
+    assert (final_dir / "job-test.dbn.zst").read_bytes() == b"dbn-zstd-placeholder"
+    assert not list(final_dir.parent.glob("*.tmp-*"))
+    assert client.batch.submissions[0]["encoding"] == "dbn"
+    assert client.batch.submissions[0]["compression"] == "zstd"
+    assert client.batch.submissions[0]["delivery"] == "download"
+    assert client.batch.submissions[0]["split_duration"] == "month"
 
 
 def test_estimate_cost_stops_on_auth_failure(tmp_path: Path) -> None:
