@@ -106,11 +106,21 @@ scripts/phase4_features/         baseline features; will be created later
 scripts/utilities/               repo safety utilities
 ```
 
-Active profile alias:
+Operational profile model:
 
 ```text
-tier_1_core -> tier_1_core_recent
+tier_0 = smoke
+tier_1 = machinery proof set
+tier_2 = real full universe
+all_raw = inventory only
+metadata_optional_test = tests only
 ```
+
+`tier_1` is for proving the machinery on CL/ES/ZN. `tier_2` is the actual
+28-market research universe. `tier_1` results do not prove `tier_2`
+performance. Missing tier-2 data should fail stage validation clearly, not
+silently shrink the universe. `all_raw` is inventory only and must not feed
+labels, WFA, gates, or research decisions.
 
 Each market config should include:
 
@@ -124,12 +134,24 @@ intraday_flatten_time
 roll_exclusion_bars
 ```
 
-Initial research universe:
+Tier-1 machinery proof universe:
 
 ```text
 CL
 ES
 ZN
+```
+
+Tier-2 real research universe:
+
+```text
+ES NQ RTY YM
+CL NG RB HO
+GC SI HG
+SR3 ZN ZB
+6A 6B 6C 6E 6J 6M 6N 6S
+ZC ZS ZW LE HE
+VX
 ```
 
 Year/profile policy:
@@ -139,6 +161,14 @@ downloaded_years = 2010-2026
 recent_research = 2023-2025
 long_research = 2010-2025
 forward_years = 2026
+research_years = 2023-2024
+final_holdout_years = 2025
+entry_lag_bars = 1
+target_horizon_bars = 15
+trend_horizon_bars = 30
+purge_bars = auto
+resolved_purge_bars = entry_lag_bars + target_horizon_bars
+default resolved value = 16
 ```
 
 Profiles:
@@ -147,11 +177,11 @@ Profiles:
 tier_0_smoke
 tier_1_core_recent
 tier_1_core_long
-tier_2_liquid_recent
-tier_2_liquid_long
-tier_3_full_long
-tier_forward_2026
-all_raw inventory only
+tier_2_universe_recent
+tier_2_universe_long
+tier_2_forward_2026
+metadata_optional_test test-only
+all_raw inventory-only
 ```
 
 2026 is forward/incomplete-year validation, not normal training history.
@@ -939,6 +969,13 @@ Create the initial OHLCV-only modeling matrix with baseline features, L0 regime 
 
 ```bash
 python -m scripts.phase4_features.build_baseline_features --profile tier_1_core
+```
+
+## Planned paths
+
+```text
+scripts/phase4_features/build_baseline_features.py
+tests/phase4_features/test_build_baseline_features.py
 ```
 
 ## Input

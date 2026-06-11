@@ -40,7 +40,7 @@ def _write_profile_config(path: Path, *, synthetic_pct: float = 2.0, degraded_pc
                 f"  max_synthetic_rows_pct: {synthetic_pct}",
                 f"  max_degraded_rows_pct: {degraded_pct}",
                 f"  max_roll_window_rows_pct: {roll_pct}",
-                "  require_roll_metadata_for_profiles: [tier_1_core, tier_2_liquid, tier_3_full]",
+                "  require_roll_metadata_for_profiles: [tier_1_core, tier_2_universe_recent, tier_2_universe_long]",
                 "profiles:",
                 "  tier_0_smoke:",
                 "    markets: [ES]",
@@ -52,7 +52,7 @@ def _write_profile_config(path: Path, *, synthetic_pct: float = 2.0, degraded_pc
                 "    markets: [CL, ES, ZN]",
                 "    years: [2024]",
                 "aliases:",
-                "  tier_1_CL_ES_ZN: tier_1_core",
+                "  tier_1: tier_1_core",
             ]
         ),
         encoding="utf-8",
@@ -191,7 +191,7 @@ def test_roll_boundary_sets_window_and_blocks_causal_valid(tmp_path: Path) -> No
     result = process_file(
         raw_path,
         out_path,
-        profile="tier_1_CL_ES_ZN",
+        profile="tier_1_core",
         roll_window_bars=1,
     )
 
@@ -573,7 +573,7 @@ def test_profile_resolution_supports_all_raw_and_tier_profile(tmp_path: Path) ->
     )
 
     all_raw = resolve_profile_inputs("all_raw", raw_root)
-    tier = resolve_profile_inputs("tier_1_CL_ES_ZN", raw_root)
+    tier = resolve_profile_inputs("tier_1_core", raw_root)
 
     assert [(market, year) for market, year, _ in all_raw] == [("ZN", 2025)]
     assert len(tier) == 9
@@ -703,7 +703,7 @@ def test_causal_valid_formula_includes_boundary_session_flag(tmp_path: Path) -> 
         )
     _write_raw(raw_path, rows)
 
-    process_file(raw_path, out_path, profile="tier_1_CL_ES_ZN")
+    process_file(raw_path, out_path, profile="tier_1_core")
 
     output = pd.read_parquet(out_path)
     expected = (
@@ -726,7 +726,7 @@ def test_missing_raw_file_manifest_reports_failure_count_and_failures(tmp_path: 
     reports_root = tmp_path / "reports" / "causal_base"
 
     result = process_file(raw_path, out_path, profile="tier_0_smoke")
-    write_reports([result], reports_root, "tier_1_CL_ES_ZN")
+    write_reports([result], reports_root, "tier_1_core")
 
     manifest = json.loads((reports_root / "causal_base_manifest.json").read_text())
     item = manifest["outputs"][0]
@@ -775,7 +775,7 @@ def test_synthetic_gap_at_max_limit_is_filled(tmp_path: Path) -> None:
     result = process_file(
         raw_path,
         out_path,
-        profile="tier_1_CL_ES_ZN",
+        profile="tier_1_core",
         max_synthetic_gap_minutes=3,
     )
 
@@ -834,7 +834,7 @@ def test_synthetic_gap_above_max_limit_is_not_filled(tmp_path: Path) -> None:
     result = process_file(
         raw_path,
         out_path,
-        profile="tier_1_CL_ES_ZN",
+        profile="tier_1_core",
         max_synthetic_gap_minutes=3,
     )
 
@@ -992,7 +992,7 @@ def test_no_synthetic_fill_across_session_boundary(tmp_path: Path) -> None:
         ],
     )
 
-    result = process_file(raw_path, out_path, profile="tier_1_CL_ES_ZN")
+    result = process_file(raw_path, out_path, profile="tier_1_core")
 
     assert result.synthetic_rows == 0
     output = pd.read_parquet(out_path)
@@ -1059,7 +1059,7 @@ def test_full_databento_schema_file_passes(tmp_path: Path) -> None:
         ],
     )
 
-    result = process_file(raw_path, out_path, profile="tier_1_CL_ES_ZN")
+    result = process_file(raw_path, out_path, profile="tier_1_core")
 
     assert result.status == "WARN"
     assert result.raw_schema_variant == "databento_full"
@@ -1121,7 +1121,7 @@ def test_missing_ohlcv_column_fails(tmp_path: Path) -> None:
         ],
     )
 
-    result = process_file(raw_path, out_path, profile="tier_1_CL_ES_ZN")
+    result = process_file(raw_path, out_path, profile="tier_1_core")
 
     assert result.status == "FAIL"
     assert result.missing_required_raw_cols == ["close"]
@@ -1268,7 +1268,7 @@ def test_production_profile_fails_if_roll_metadata_missing(tmp_path: Path) -> No
     )
 
     result = process_file(raw_path, out_path, profile="tier_1_core")
-    alias_result = process_file(raw_path, alias_out_path, profile="tier_1_CL_ES_ZN")
+    alias_result = process_file(raw_path, alias_out_path, profile="tier_1_core")
 
     assert result.status == "FAIL"
     assert result.missing_required_raw_cols == ["instrument_id"]
@@ -1318,7 +1318,7 @@ def test_degraded_data_quality_blocks_whole_session_from_causal_valid(tmp_path: 
         ],
     )
 
-    result = process_file(raw_path, out_path, profile="tier_1_CL_ES_ZN")
+    result = process_file(raw_path, out_path, profile="tier_1_core")
 
     output = pd.read_parquet(out_path)
     raw_rows = output[output["raw_row_present"]]

@@ -50,14 +50,33 @@ python -m scripts.raw_ingest.download_databento_raw --universe extended_cme_vix 
 
 The downloader does not replace existing files unless `--overwrite` is passed.
 
+## Project Profiles
+
+Operational profiles live in `configs/alpha_tiered.yaml`.
+
+```text
+tier_0 = smoke test
+tier_1 = CL/ES/ZN machinery proof set
+tier_2 = exact 28-market real universe
+all_raw = inventory only
+metadata_optional_test = unit-test only
+```
+
+Default profile: `tier_1_core_recent`.
+
+Use `tier_1_core` for current Phase 1-4 debugging. `tier_1` results do not
+prove `tier_2` performance; `tier_2` is the actual research universe. Missing
+tier-2 data should fail stage validation clearly, not silently shrink the
+universe.
+
 ## Causal Base
 
 Canonical implementation: `scripts/phase2_causal_base/build_causal_base_data.py`.
 
-Build the normalized causal base from every raw market/year file:
+Build the normalized causal base for the tier-1 machinery proof set:
 
 ```powershell
-python -m scripts.phase2_causal_base.build_causal_base_data --profile all_raw
+python -m scripts.phase2_causal_base.build_causal_base_data --profile tier_1_core
 ```
 
 Output:
@@ -71,11 +90,32 @@ reports/causal_base/
 
 Canonical implementation: `scripts/phase3_labels/build_labels.py`.
 
+Build labels for the tier-1 machinery proof set:
+
+```powershell
+python -m scripts.phase3_labels.build_labels --profile tier_1_core
+```
+
 Output:
 
 ```text
 data/labeled/{market}/{year}.parquet
 reports/labels/
+```
+
+## Baseline Feature Matrix
+
+Planned Phase 4 implementation:
+
+```text
+scripts/phase4_features/build_baseline_features.py
+tests/phase4_features/test_build_baseline_features.py
+```
+
+Canonical command once implemented:
+
+```powershell
+python -m scripts.phase4_features.build_baseline_features --profile tier_1_core
 ```
 
 ## Tests

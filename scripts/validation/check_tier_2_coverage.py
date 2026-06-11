@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate TARGET_28 config and artifact coverage."""
+"""Validate tier-2 universe config and artifact coverage."""
 
 from __future__ import annotations
 
@@ -11,7 +11,21 @@ from typing import Any
 import yaml
 
 
-TARGET_28 = [
+TIER_2_UNIVERSE = [
+    "ES",
+    "NQ",
+    "RTY",
+    "YM",
+    "CL",
+    "NG",
+    "RB",
+    "HO",
+    "GC",
+    "SI",
+    "HG",
+    "SR3",
+    "ZN",
+    "ZB",
     "6A",
     "6B",
     "6C",
@@ -20,20 +34,6 @@ TARGET_28 = [
     "6M",
     "6N",
     "6S",
-    "CL",
-    "NG",
-    "RB",
-    "HO",
-    "ES",
-    "NQ",
-    "RTY",
-    "YM",
-    "GC",
-    "SI",
-    "HG",
-    "SR3",
-    "ZN",
-    "ZB",
     "ZC",
     "ZS",
     "ZW",
@@ -116,8 +116,10 @@ def check_profile(config: dict[str, Any], requested_profile: str) -> tuple[dict[
         return {}, [f"profile {requested_profile!r} resolved to {resolved!r} but was not found"]
 
     markets = [str(item) for item in profile.get("markets", [])]
-    if markets != TARGET_28:
-        errors.append("profile markets do not exactly match TARGET_28 order and membership")
+    if markets != TIER_2_UNIVERSE:
+        errors.append("profile markets do not exactly match tier-2 universe order and membership")
+    if len(markets) != 28 or len(set(markets)) != 28:
+        errors.append("profile markets must contain exactly 28 unique markets")
 
     excluded_present = sorted(set(markets) & set(EXCLUDED))
     if excluded_present:
@@ -131,7 +133,7 @@ def check_profile(config: dict[str, Any], requested_profile: str) -> tuple[dict[
     if not isinstance(families, dict):
         errors.append("profile market_families mapping missing")
         families = {}
-    missing_family = [market for market in TARGET_28 if not families.get(market)]
+    missing_family = [market for market in TIER_2_UNIVERSE if not families.get(market)]
     if missing_family:
         errors.append(f"missing market_families: {','.join(missing_family)}")
 
@@ -159,9 +161,9 @@ def check_sessions(session_config: dict[str, Any]) -> tuple[dict[str, Any], list
         markets = {}
         errors.append("session markets mapping missing")
 
-    missing = [market for market in TARGET_28 if market not in markets]
+    missing = [market for market in TIER_2_UNIVERSE if market not in markets]
     bad_template: list[str] = []
-    for market in TARGET_28:
+    for market in TIER_2_UNIVERSE:
         entry = markets.get(market, {})
         template = entry.get("session_template") if isinstance(entry, dict) else None
         if market in markets and template not in templates:
@@ -182,12 +184,12 @@ def check_costs(cost_config: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
         markets = {}
         errors.append("cost markets mapping missing")
 
-    missing = [market for market in TARGET_28 if market not in markets]
+    missing = [market for market in TIER_2_UNIVERSE if market not in markets]
     missing_keys: dict[str, list[str]] = {}
     invalid_values: dict[str, list[str]] = {}
     provisional = []
 
-    for market in TARGET_28:
+    for market in TIER_2_UNIVERSE:
         entry = markets.get(market)
         if not isinstance(entry, dict):
             continue
@@ -233,7 +235,7 @@ def check_files(root: Path, years: list[int]) -> dict[str, Any]:
     missing: list[str] = []
     present: list[str] = []
     by_market: dict[str, dict[str, list[int]]] = {}
-    for market in TARGET_28:
+    for market in TIER_2_UNIVERSE:
         market_present: list[int] = []
         market_missing: list[int] = []
         for year in years:
@@ -283,7 +285,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "profile": profile_info,
         "stage": args.stage,
-        "target_28": TARGET_28,
+        "tier_2_universe": TIER_2_UNIVERSE,
         "excluded": EXCLUDED,
         "config_checks": {
             "profile": {"errors": profile_errors, **profile_info},
@@ -309,7 +311,7 @@ def write_report(path: Path, report: dict[str, Any]) -> None:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", default="target_28_recent")
+    parser.add_argument("--profile", default="tier_2_universe_recent")
     parser.add_argument("--stage", choices=["raw", "causal", "labels", "all"], default="all")
     parser.add_argument("--config", default="configs/alpha_tiered.yaml")
     parser.add_argument("--session-config", default="configs/market_sessions.yaml")
@@ -317,7 +319,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--raw-root", default="data/raw")
     parser.add_argument("--causal-root", default="data/causally_gated_normalized")
     parser.add_argument("--labeled-root", default="data/labeled")
-    parser.add_argument("--report-out", default="reports/validation/target_28_coverage.json")
+    parser.add_argument("--report-out", default="reports/validation/tier_2_coverage.json")
     return parser
 
 

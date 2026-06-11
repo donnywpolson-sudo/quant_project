@@ -93,7 +93,7 @@ def test_entry_exit_alignment_uses_next_bar_open_not_close_t(tmp_path: Path) -> 
     result = process_file(
         input_path,
         output_path,
-        profile="tier_1_CL_ES_ZN",
+        profile="tier_1_core",
         costs_config=tmp_path / "configs" / "costs.yaml",
     )
 
@@ -234,7 +234,7 @@ def test_present_cost_config_missing_market_warns(tmp_path: Path) -> None:
     result = process_file(
         input_path,
         output_path,
-        profile="tier_1_CL_ES_ZN",
+        profile="tier_1_core",
         costs_config=costs_path,
     )
 
@@ -331,10 +331,10 @@ def test_output_schema_and_reports(tmp_path: Path) -> None:
     result = process_file(
         input_path,
         output_path,
-        profile="tier_1_CL_ES_ZN",
+        profile="tier_1_core",
         costs_config=tmp_path / "configs" / "costs.yaml",
     )
-    write_reports([result], reports_root, "tier_1_CL_ES_ZN")
+    write_reports([result], reports_root, "tier_1_core")
 
     output = pd.read_parquet(output_path)
     assert list(output.columns) == list(input_df.columns) + LABEL_COLUMNS
@@ -364,10 +364,10 @@ def test_mixed_roll_detection_availability_is_reported(tmp_path: Path) -> None:
     result = process_file(
         input_path,
         output_path,
-        profile="tier_1_CL_ES_ZN",
+        profile="tier_1_core",
         costs_config=tmp_path / "configs" / "costs.yaml",
     )
-    write_reports([result], reports_root, "tier_1_CL_ES_ZN")
+    write_reports([result], reports_root, "tier_1_core")
 
     manifest = json.loads((reports_root / "label_manifest.json").read_text())
     report = json.loads((reports_root / "label_report.json").read_text())

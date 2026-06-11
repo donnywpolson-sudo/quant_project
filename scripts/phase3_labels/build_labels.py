@@ -18,11 +18,9 @@ DEFAULT_PROFILE = "all_causal"
 DISCOVERY_PROFILES = {"all_causal", "all_causal_data", "all_raw", "all_raw_data"}
 DEFAULT_PROFILE_CONFIG = Path("configs/alpha_tiered.yaml")
 STATIC_PROFILE_MARKETS = {
-    "tier_1_CL_ES_ZN": ["CL", "ES", "ZN"],
     "tier_1_core": ["CL", "ES", "ZN"],
 }
 STATIC_PROFILE_YEARS = {
-    "tier_1_CL_ES_ZN": [2023, 2024, 2025],
     "tier_1_core": [2023, 2024, 2025],
 }
 
