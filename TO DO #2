@@ -1,0 +1,291 @@
+Here is a Codex-ready prompt that converts your project_layout.md into enforced architecture + minimal patches, not a rewrite.
+It is scoped to:
+
+fix structural gaps
+enforce causality + WFA + no leakage
+avoid refactoring everything
+
+
+You are a senior quantitative systems engineer and adversarial code auditor.
+
+Your task:
+Bring this repository into strict compliance with project_layout.md.
+
+CRITICAL RULES:
+- DO NOT rewrite the entire codebase
+- APPLY MINIMAL PATCHES
+- PRESERVE EXISTING LOGIC unless it violates:
+  - causality
+  - leakage constraints
+  - walk-forward discipline
+  - execution realism
+- ENFORCE constraints with hard failures (asserts), not comments
+
+--------------------------------------------------
+PRIMARY OBJECTIVE
+--------------------------------------------------
+
+Convert the pipeline from “best effort” to “non-bypassable”.
+
+Every stage must:
+1. Verify upstream artifacts exist
+2. Validate schema + hash
+3. Enforce invariants
+4. Fail fast if violated
+
+--------------------------------------------------
+PHASE 1 – PIPELINE ORCHESTRATOR (MANDATORY)
+--------------------------------------------------
+
+Create or update:
+
+run_pipeline.py
+
+Requirements:
+- Hard-code execution order:
+
+  phase2_causal_base
+  phase3_labels
+  phase4_features (baseline)
+  phase5_registry
+  phase6_wfa_split
+  phase7_wfa_train
+  phase8_predictions
+  phase9_execution
+  phase10_metrics
+  phase11_gate
+
+- Each stage must:
+  - check required input artifacts
+  - verify file hash + required columns
+  - abort on failure
+
+- No stage should be runnable independently in "production mode"
+
+--------------------------------------------------
+PHASE 2 – HARD VALIDATION ASSERTS (NON-NEGOTIABLE)
+--------------------------------------------------
+
+Add a shared module:
+
+pipeline/assertions.py
+
+Implement:
+
+1. assert_no_feature_leakage(feature_cols, target_cols, metadata_cols)
+   - fail if:
+     - any target column in features
+     - any metadata identifier in features
+     - any forbidden column in features
+
+2. assert_target_causality(df)
+   - fail if any label:
+     - touches synthetic rows
+     - crosses session_segment_id
+     - crosses roll_window_flag
+     - violates t+1 entry / t+16 exit
+
+3. assert_wfa_purge(split_plan, labels)
+   - fail if any training row label overlaps test window
+
+4. assert_oos_predictions(predictions)
+   - fail if:
+     - any train fold row appears
+     - duplicate (market, timestamp, fold_id, model_id)
+
+5. assert_execution_alignment(df)
+   - fail if:
+     - entry != t+1
+     - exit != t+16
+     - position held past cutoff
+
+All asserts must raise exceptions (not warnings)
+
+--------------------------------------------------
+PHASE 3 – REGISTRY AS HARD GATE
+--------------------------------------------------
+
+Before ANY model training:
+
+- Load:
+  feature_cols.json
+  target_cols.json
+  metadata_cols.json
+
+- Call:
+  assert_no_feature_leakage(...)
+
+- Abort if violation
+
+--------------------------------------------------
+PHASE 4 – WFA CENTRALIZATION
+--------------------------------------------------
+
+Ensure ALL model training happens in:
+
+scripts/run_wfa.py
+
+Enforce:
+- No `.fit()` outside this module
+- Train-only:
+  - imputer
+  - scaler
+- Predict ONLY on test folds
+
+Add:
+- config hash
+- feature hash
+- model_id to outputs
+
+--------------------------------------------------
+PHASE 5 – PREDICTION CONTRACT
+--------------------------------------------------
+
+Standardize predictions schema:
+
+data/predictions/.../oos_predictions.parquet
+
+Must include:
+- market, timestamp, fold_id
+- model_id, model_family
+- y_pred_raw, y_pred_calibrated
+- execution_open, execution_close
+- target_valid, causal_valid
+- feature_config_hash
+- model_config_hash
+
+Add validation:
+assert_oos_predictions(predictions)
+
+--------------------------------------------------
+PHASE 6 – EXECUTION ENGINE SEPARATION
+--------------------------------------------------
+
+Create:
+
+execution/policy_engine.py
+
+Rules:
+- Input: predictions parquet ONLY
+- No joins to raw/features
+- Deterministic position logic
+
+Implement:
+- position state machine
+- cost calculation
+- forced flat enforcement
+
+Disallow:
+- any script computing PnL outside this module
+
+--------------------------------------------------
+PHASE 7 – FREEZE STEP (CRITICAL)
+--------------------------------------------------
+
+Add:
+
+scripts/freeze_features.py  
+scripts/freeze_model.py  
+scripts/freeze_policy.py  
+
+Each must:
+- compute input hash
+- write immutable artifact under:
+  data/frozen_*/
+
+Add assertion:
+assert_frozen_artifacts()
+
+Final WFA must:
+- load ONLY frozen artifacts
+
+--------------------------------------------------
+PHASE 8 – RESEARCH VS PIPELINE SEPARATION
+--------------------------------------------------
+
+Move files:
+
+scripts/compare_*  
+scripts/diagnose_*  
+scripts/confirm_*  
+
+→ research/
+
+Ensure:
+- pipeline modules do not import from research/
+
+--------------------------------------------------
+PHASE 9 – GATE ORCHESTRATOR
+--------------------------------------------------
+
+Create:
+
+scripts/run_gate.py
+
+Outputs:
+
+reports/gates/*.json with:
+
+- pipeline_integrity
+- causal_integrity
+- wfa_integrity
+- economic_viability
+- cost_stress_viability
+- prop_firm_viability
+
+Fail if:
+- net_return < 0
+- cost_drag > abs(gross_return)
+- holdout contamination detected
+
+--------------------------------------------------
+PHASE 10 – MINIMAL TEST IMPLEMENTATION (FIRST PASS)
+--------------------------------------------------
+
+Implement ONLY these tests initially:
+
+1. test_target_causality()
+2. test_no_feature_leakage()
+3. test_wfa_purge()
+4. test_oos_predictions_unique()
+5. test_execution_alignment()
+
+Tests must:
+- load real artifacts
+- fail hard
+
+--------------------------------------------------
+CONSTRAINTS
+--------------------------------------------------
+
+DO NOT:
+- add new features
+- add new models
+- tune hyperparameters
+- expand universe
+
+FOCUS ONLY ON:
+- enforcing existing design
+
+--------------------------------------------------
+SUCCESS CRITERIA
+--------------------------------------------------
+
+The system is considered fixed when:
+
+- Any leakage causes immediate failure
+- Any WFA violation causes immediate failure
+- Final holdout cannot be accidentally used
+- Predictions are strictly OOS only
+- Execution is reproducible from predictions alone
+- Pipeline cannot be run out of order
+
+--------------------------------------------------
+OUTPUT FORMAT
+--------------------------------------------------
+
+Return:
+1. List of files modified/created
+2. Code diffs ONLY (no full files)
+3. Short explanation per change (1–2 lines)
+4. Any detected violations in current repo
