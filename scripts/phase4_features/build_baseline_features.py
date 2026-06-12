@@ -12,7 +12,7 @@ import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping, cast
 
 import numpy as np
 import pandas as pd
@@ -534,6 +534,10 @@ def num_col(df: pd.DataFrame, column: str) -> pd.Series:
     return pd.to_numeric(df[column], errors="coerce")
 
 
+def signed_series(series: pd.Series) -> pd.Series:
+    return pd.Series(np.sign(series.to_numpy(dtype=float)), index=series.index, dtype=float)
+
+
 def safe_div(numerator: pd.Series, denominator: pd.Series | float, eps: float = EPS) -> pd.Series:
     denom = denominator if isinstance(denominator, pd.Series) else pd.Series(denominator, index=numerator.index)
     return numerator / denom.where(denom.abs() > eps)
@@ -639,7 +643,7 @@ def bars_since(flag: pd.Series, valid: pd.Series, segment: pd.Series) -> pd.Seri
             else:
                 count += 1.0
             values.append(count)
-        output.loc[idx] = values
+        output.loc[idx] = pd.Series(values, index=idx, dtype=float)
     return output
 
 
@@ -651,7 +655,7 @@ def consecutive_bars(condition: pd.Series, valid: pd.Series, segment: pd.Series)
         for cond, is_valid in zip(condition.loc[idx].astype(bool), valid.loc[idx].astype(bool)):
             count = count + 1.0 if cond and is_valid else 0.0
             values.append(count)
-        output.loc[idx] = values
+        output.loc[idx] = pd.Series(values, index=idx, dtype=float)
     return output
 
 
@@ -766,8 +770,13 @@ def add_base_market_features(df: pd.DataFrame, tick_size: float) -> pd.DataFrame
     out["feature_minutes_until_session_close"] = num_col(out, "minutes_until_session_close").where(valid)
     out["feature_session_progress"] = num_col(out, "session_progress").where(valid)
     minute = num_col(out, "minute_of_day")
-    out["feature_minute_of_day_sin"] = np.sin(2.0 * np.pi * minute / 1440.0).where(valid)
-    out["feature_minute_of_day_cos"] = np.cos(2.0 * np.pi * minute / 1440.0).where(valid)
+    minute_angle = 2.0 * np.pi * minute / 1440.0
+    out["feature_minute_of_day_sin"] = pd.Series(
+        np.sin(minute_angle.to_numpy(dtype=float)), index=out.index, dtype=float
+    ).where(valid)
+    out["feature_minute_of_day_cos"] = pd.Series(
+        np.cos(minute_angle.to_numpy(dtype=float)), index=out.index, dtype=float
+    ).where(valid)
     out["feature_day_of_week"] = num_col(out, "day_of_week").where(valid)
 
     one_bar_abs_move = (safe_close - lag(safe_close, segment, 1)).abs()
@@ -775,7 +784,7 @@ def add_base_market_features(df: pd.DataFrame, tick_size: float) -> pd.DataFrame
         move = (safe_close - lag(safe_close, segment, window)).abs()
         path = rolling_sum(one_bar_abs_move.where(valid), segment, window)
         out[f"feature_efficiency_ratio_{window}"] = safe_div(move, path)
-    direction = np.sign(safe_close - prev_close).where(valid)
+    direction = signed_series(safe_close - prev_close).where(valid)
     for window in (15, 30):
         previous_direction = lag(direction, segment, 1)
         same_direction = direction.eq(previous_direction).where(previous_direction.notna())
@@ -855,7 +864,6 @@ def add_base_market_features(df: pd.DataFrame, tick_size: float) -> pd.DataFrame
     out["feature_vol_expansion_15_vs_60"] = safe_div(out["feature_realized_vol_15"], out["feature_realized_vol_60"])
     tr_mean_60 = rolling_mean(true_range, segment, 60)
     tr_std_60 = rolling_std(true_range, segment, 60)
-    large_bar = (true_range > tr_mean_60 + 2.0 * tr_std_60) & valid
     large_bar_signal = (true_range > tr_mean_60 + 2.0 * tr_std_60).where(
         valid & tr_mean_60.notna() & tr_std_60.notna()
     )
@@ -952,7 +960,7 @@ def add_base_market_features(df: pd.DataFrame, tick_size: float) -> pd.DataFrame
     out["feature_failed_retest_session_high"] = (safe_high > prior_session_high_so_far) & (safe_close < prior_session_high_so_far) & valid
     out["feature_failed_retest_session_low"] = (safe_low < prior_session_low_so_far) & (safe_close > prior_session_low_so_far) & valid
 
-    shock_direction = np.sign(safe_close - prev_close).where(shock, 0.0)
+    shock_direction = signed_series(safe_close - prev_close).where(shock, 0.0)
     out["feature_shock_direction"] = shock_direction
     up_shock = shock & (shock_direction > 0)
     down_shock = shock & (shock_direction < 0)
@@ -1232,8 +1240,8 @@ def process_file(
         return result
 
     tick_size, tick_failure = resolve_market_tick_size(costs_config, market)
-    if tick_failure:
-        result.failures.append(tick_failure)
+    if tick_failure or tick_size is None:
+        result.failures.append(tick_failure or f"missing tick_size for market: {market}")
         return result
 
     out = add_base_market_features(df, tick_size)
@@ -1318,8 +1326,10 @@ def high_correlation_report(results: list[FeatureResult], feature_cols: list[str
         for i, left in enumerate(corr.columns):
             for right in corr.columns[i + 1 :]:
                 value = corr.loc[left, right]
-                if pd.notna(value) and abs(float(value)) >= 0.98:
-                    rows.append({"feature_a": left, "feature_b": right, "corr": float(value)})
+                if pd.notna(value):
+                    corr_value = float(cast(Any, value))
+                    if abs(corr_value) >= 0.98:
+                        rows.append({"feature_a": left, "feature_b": right, "corr": corr_value})
     reports_root.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows, columns=["feature_a", "feature_b", "corr"]).to_csv(
         reports_root / "feature_correlation_report.csv",

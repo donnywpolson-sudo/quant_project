@@ -1073,7 +1073,9 @@ def infer_dbn_archive_entry(path: Path, dbn_root: Path) -> DbnArchiveEntry:
         if len(parts) == 4 and parts[0] == VENDOR:
             schema_dir, product, filename = parts[1], parts[2], parts[3]
         elif len(parts) == 3:
-            schema_dir, product, filename = parts
+            schema_dir = parts[0]
+            product = parts[1]
+            filename = parts[2]
         else:
             schema_dir = ""
             product = parts[0]
@@ -2428,7 +2430,9 @@ def main() -> int:
         estimates = estimate_cost(client, tasks)
         estimates = add_result_provenance(estimates, plan)
         write_json(report_path(args, "databento_cost_estimate.json"), estimates)
-        total = sum(float(cast(Any, item.get("estimated_cost_usd", 0.0))) for item in estimates)
+        total = sum(
+            float(cast(Any, item.get("estimated_cost_usd", 0.0))) for item in estimates
+        )
         errors = sum(1 for item in estimates if item.get("status") == "estimate_error")
         print(f"TOTAL_ESTIMATED_COST_USD {total:.4f}")
         print(f"TOTAL_ESTIMATE_ERRORS {errors}")

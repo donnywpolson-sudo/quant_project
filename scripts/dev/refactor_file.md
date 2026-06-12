@@ -75,8 +75,23 @@ large structural changes
 changing logic while cleaning wording
 deleting comments that explain non-obvious behavior
 formatting churn that makes the diff harder to review
+removing imports, casts, noqa comments, or explicit type narrowing unless validation proves they are unused
+changing pandas Series operations into bare numpy arrays unless you wrap the result back into a Series with the original index
+assigning raw lists to pandas .loc/.iloc when a same-index Series is expected
 
 Comments should explain why something exists or when to use it, not restate obvious code.
+
+Static-Analysis Safety
+
+After readability edits, re-check diagnostics caused by the refactor.
+
+Watch for:
+
+Pylance object inference from Protocol methods that return object
+Pylance tuple-length narrowing after tuple unpacking
+pandas/numpy typing where np.sin, np.cos, np.sign, or np.where loses Series methods like .where
+Ruff unused imports/variables introduced by deleted comments or simplified code
+Ruff E402 when a script intentionally adjusts sys.path before project imports
 
 Validation
 
@@ -84,6 +99,7 @@ After editing:
 
 Validate syntax/parsing for the file type.
 Run relevant tests or smoke checks.
+Run Ruff/Pylance/Pyright if available, or at least inspect IDE diagnostics before considering the refactor done.
 If this is a config/data file, compare parsed before vs. after when possible.
 Confirm whether behavior changed.
 
