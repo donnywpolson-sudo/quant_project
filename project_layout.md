@@ -1,5 +1,27 @@
 # Quant Project Layout
 
+## How to read this document
+
+This file is the project contract. Use it to check what each pipeline phase
+must read, write, validate, and refuse to trust.
+
+Fast map:
+
+- Part 1: current operating model, active configs, artifact flow, and research policy.
+- Part 2: phase-by-phase build requirements and acceptance checks.
+- End sections: provenance, known limitations, required tests, build priority, and Codex implementation prompt.
+
+Stable contracts to preserve:
+
+- file paths
+- config keys
+- output column names
+- phase names
+- gate meanings
+- train/test/final-holdout separation rules
+
+---
+
 ## Part 1 — Pipeline Structure Overview
 
 ### Project goal
@@ -302,15 +324,11 @@ hardcoded model.
 
 Required staged order:
 
-- Phase 7A: linear control models
-- Phase 7A linear controls
-- Phase 7B: sklearn nonlinear challenger
-- Phase 7B HistGradientBoosting challengers
-- Phase 7C: optional LightGBM/XGBoost challenger
-- Phase 7C optional LightGBM/XGBoost challengers
-- Phase 8A: probability calibration and model comparison
-- Phase 8A calibration/model comparison
-- Phase 15: frozen feature + model + calibration + policy set
+- Phase 7A linear controls: Ridge/logistic benchmark models.
+- Phase 7B HistGradientBoosting challengers: first sklearn nonlinear comparison.
+- Phase 7C optional LightGBM/XGBoost challengers: optional CPU-first boosted-tree comparison.
+- Phase 8A calibration/model comparison: train-fold-only calibration and model reporting.
+- Phase 15: frozen feature + model + calibration + policy set.
 
 Do not use neural nets, transformers, or reinforcement learning until simpler
 tabular models survive WFA, costs, turnover, final holdout, and prop-firm
@@ -2616,7 +2634,7 @@ failures
 ## Known Limitations
 
 - Continuous contracts are research series, not directly live-tradable contracts.
-- Regular-session-only calendar coverage is not full holiday/early-close proof.
+- Calendar coverage is config-backed through 2026, but exchange schedules must be refreshed before live use.
 - L0 OHLCV cannot model queue position, spread, order-book imbalance, or true fill probability.
 - Provisional costs are structural only, not economic evidence.
 - ZN synthetic-density warning must remain visible.

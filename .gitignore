@@ -1,6 +1,9 @@
+# Python and local test state
 .venv/
 __pycache__/
 .pytest_cache/
+
+# Local secrets and credentials
 .env
 .env.*
 !.env.example
@@ -11,6 +14,7 @@ databento_api_key*
 *.key
 *.pem
 
+# Generated pipeline outputs
 data/
 reports/
 logs/
@@ -18,6 +22,7 @@ models/
 artifacts/
 cache/
 
+# Large or generated data files
 *.parquet
 *.dbn
 *.zst
