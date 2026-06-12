@@ -30,14 +30,13 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.phase1_raw_contract import (
+from scripts.phase1_raw_contract import (  # noqa: E402
     DEFINITION_METADATA_FIELDS,
     EXPECTED_COMPRESSION,
     EXPECTED_ENCODING,
     REQUIRED_DATASET,
     REQUIRED_DEFINITION_FIELDS,
     REQUIRED_MANIFEST_FIELDS,
-    REQUIRED_OHLCV_FIELDS,
     REQUIRED_SCHEMAS,
     SCHEMA_PATHS,
     VENDOR,
@@ -239,8 +238,11 @@ class DatabentoClient(DatabentoMetadataHolder, Protocol):
     timeseries: DatabentoTimeseriesClient
 
 
+DbnToDfResult = pd.DataFrame | Iterable[pd.DataFrame]
+
+
 class DatabentoStore(Protocol):
-    def to_df(self, **kwargs: object) -> object: ...
+    def to_df(self, **kwargs: object) -> DbnToDfResult: ...
 
 
 def parse_symbols(value: str | None, universe: str) -> list[str]:
@@ -593,7 +595,7 @@ def _condition_date(row: dict[str, object]) -> str | None:
     for key in ("date", "day", "d", "start_date"):
         value = row.get(key)
         if value:
-            return pd.Timestamp(value).date().isoformat()
+            return pd.Timestamp(cast(Any, value)).date().isoformat()
     return None
 
 
@@ -640,9 +642,11 @@ def store_to_required_dataframe(
     condition_by_date: dict[str, str] | None = None,
     default_quality_status: str = "available",
 ) -> pd.DataFrame:
-    df = store.to_df(price_type=PRICE_TYPE, pretty_ts=True, map_symbols=True)
-    if not isinstance(df, pd.DataFrame):
-        df = pd.concat(df, ignore_index=False)
+    df_or_frames = store.to_df(price_type=PRICE_TYPE, pretty_ts=True, map_symbols=True)
+    if isinstance(df_or_frames, pd.DataFrame):
+        df = df_or_frames
+    else:
+        df = pd.concat(df_or_frames, ignore_index=False)
 
     df = df.copy()
     if "ts_event" not in df.columns:
@@ -1072,7 +1076,8 @@ def infer_dbn_archive_entry(path: Path, dbn_root: Path) -> DbnArchiveEntry:
             schema_dir, product, filename = parts
         else:
             schema_dir = ""
-            product, filename = parts
+            product = parts[0]
+            filename = parts[1]
         if schema_dir and schema_dir != schema_path_name("ohlcv-1m"):
             raise ValueError(
                 "cannot infer market/year from DBN path; expected "
@@ -1146,7 +1151,11 @@ def definition_frame_for_group(dbn_root: Path, product: str, year: int) -> tuple
     import databento as db
 
     store = db.DBNStore.from_file(path)
-    df = cast(DatabentoStore, store).to_df()
+    df_or_frames = cast(DatabentoStore, store).to_df()
+    if isinstance(df_or_frames, pd.DataFrame):
+        df = df_or_frames
+    else:
+        df = pd.concat(df_or_frames, ignore_index=False)
     missing = [field for field in REQUIRED_DEFINITION_FIELDS if field not in df.columns]
     if missing:
         raise ValueError("definition missing required fields: " + ",".join(missing))
@@ -1644,7 +1653,7 @@ def execute_download(
                     task=task,
                     output_path=out,
                     elapsed_seconds=time.monotonic() - task_started,
-                    rows=int(check["rows"]),
+                    rows=int(cast(Any, check["rows"])),
                 )
             except Exception as exc:
                 results.append({**asdict(task), "status": "bad_existing", "error": str(exc)})
@@ -1705,7 +1714,7 @@ def execute_download(
                 task=task,
                 output_path=out,
                 elapsed_seconds=time.monotonic() - task_started,
-                rows=int(check["rows"]),
+                rows=int(cast(Any, check["rows"])),
                 extra=f"degraded_dates={degraded}",
             )
         except Exception as exc:
@@ -2419,7 +2428,7 @@ def main() -> int:
         estimates = estimate_cost(client, tasks)
         estimates = add_result_provenance(estimates, plan)
         write_json(report_path(args, "databento_cost_estimate.json"), estimates)
-        total = sum(float(item.get("estimated_cost_usd", 0.0)) for item in estimates)
+        total = sum(float(cast(Any, item.get("estimated_cost_usd", 0.0))) for item in estimates)
         errors = sum(1 for item in estimates if item.get("status") == "estimate_error")
         print(f"TOTAL_ESTIMATED_COST_USD {total:.4f}")
         print(f"TOTAL_ESTIMATE_ERRORS {errors}")
