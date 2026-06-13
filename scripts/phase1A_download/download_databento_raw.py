@@ -64,6 +64,10 @@ DEFAULT_RETRY_BACKOFF_SECONDS = 1.0
 DATASET_AVAILABLE_START = {
     CME_DATASET: date(2010, 6, 6),
 }
+PRODUCT_AVAILABLE_START = {
+    (CME_DATASET, "RTY"): date(2017, 6, 5),
+    (CME_DATASET, "SR3"): date(2018, 4, 23),
+}
 FATAL_ERROR_MARKERS = (
     "401",
     "402",
@@ -259,6 +263,12 @@ def dataset_for_product(product: str) -> str:
     return CME_DATASET
 
 
+def available_start_for_product(dataset: str, product: str, requested_start: date) -> date:
+    dataset_start = DATASET_AVAILABLE_START.get(dataset, requested_start)
+    product_start = PRODUCT_AVAILABLE_START.get((dataset, product), requested_start)
+    return max(requested_start, dataset_start, product_start)
+
+
 def validate_allowed_dataset(dataset: str) -> str:
     if dataset not in ALLOWED_DATASETS:
         allowed = ", ".join(sorted(ALLOWED_DATASETS))
@@ -409,8 +419,11 @@ def iter_range_tasks(
     for product in product_list:
         task_dataset = dataset or dataset_for_product(product)
         validate_allowed_dataset(task_dataset)
-        dataset_start = DATASET_AVAILABLE_START.get(task_dataset, requested_start)
-        range_start = max(requested_start, dataset_start)
+        range_start = available_start_for_product(
+            task_dataset,
+            product,
+            requested_start,
+        )
         if range_start >= final_end:
             continue
         for task_start, task_end in iter_chunk_ranges(
@@ -463,9 +476,12 @@ def iter_year_tasks(
     for product in product_list:
         dataset = dataset_for_product(product)
         validate_allowed_dataset(dataset)
-        dataset_start = DATASET_AVAILABLE_START.get(dataset, date(start_year, 1, 1))
         for year in range(start_year, end_year + 1):
-            start = max(date(year, 1, 1), dataset_start)
+            start = available_start_for_product(
+                dataset,
+                product,
+                date(year, 1, 1),
+            )
             end = min(date(year + 1, 1, 1), final_end)
             if start >= end:
                 continue

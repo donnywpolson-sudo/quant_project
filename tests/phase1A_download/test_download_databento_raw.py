@@ -252,7 +252,7 @@ def test_default_roots_match_public_raw_ingest_contract() -> None:
     args = build_arg_parser().parse_args([])
     assert args.mode == "download-dbn"
     assert args.chunk == "year"
-    assert args.workers == 3
+    assert args.workers == 4
     assert args.end_date == (date.today() - timedelta(days=1)).isoformat()
     assert args.dbn_root == "data/raw"
     assert args.raw_root == "data/raw"
@@ -462,6 +462,22 @@ def test_iter_year_tasks_clips_glbx_to_available_start(tmp_path: Path) -> None:
     assert tasks[0].end == "2011-01-01"
 
 
+def test_iter_year_tasks_clips_products_to_product_available_start(tmp_path: Path) -> None:
+    tasks = iter_year_tasks(
+        ["RTY", "SR3"],
+        start_year=2010,
+        end_year=2018,
+        end_date="2019-01-01",
+        output_root=tmp_path / "raw",
+    )
+
+    assert [(task.product, task.year, task.start, task.end) for task in tasks] == [
+        ("RTY", 2017, "2017-06-05", "2018-01-01"),
+        ("RTY", 2018, "2018-01-01", "2019-01-01"),
+        ("SR3", 2018, "2018-04-23", "2019-01-01"),
+    ]
+
+
 def test_iter_month_ranges_uses_calendar_months_and_clips_edges() -> None:
     assert iter_month_ranges("2024-01-15", "2024-04-10") == [
         ("2024-01-15", "2024-02-01"),
@@ -523,6 +539,26 @@ def test_iter_range_tasks_builds_market_year_dbn_files(tmp_path: Path) -> None:
         "2024.dbn.zst",
     )
     assert batch_split_duration_for_chunk("year") == "year"
+
+
+def test_iter_range_tasks_clips_products_to_product_available_start(tmp_path: Path) -> None:
+    tasks = iter_range_tasks(
+        ["RTY", "SR3"],
+        start="2010-01-01",
+        end="2019-01-01",
+        output_root=tmp_path / "raw",
+        chunk="year",
+        mode="download-dbn",
+        raw_format="dbn-zstd",
+        dataset="GLBX.MDP3",
+        stype_in="continuous",
+    )
+
+    assert [(task.product, task.year, task.start, task.end) for task in tasks] == [
+        ("RTY", 2017, "2017-06-05", "2018-01-01"),
+        ("RTY", 2018, "2018-01-01", "2019-01-01"),
+        ("SR3", 2018, "2018-04-23", "2019-01-01"),
+    ]
 
 
 def test_iter_range_tasks_builds_batch_dbn_zstd_jobs_with_parent_symbols(
