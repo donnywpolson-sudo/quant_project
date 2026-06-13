@@ -6,6 +6,23 @@ Goal: execute the next project tasks in this exact order, one task at a time. Do
 
 Project-wide exclusions: E7, J7, QI, QO, ZQ, and PA are not needed. Exclude them from coverage audits, download plans, downloads, conversions, validations, and reports unless explicitly re-approved.
 
+Long-running operation guard:
+- Do not start Databento downloads or bulk conversions from a static pasted year list.
+- First produce a current missing-only audit and dry-run plan from the filesystem.
+- If a download or conversion plan spans more than one market-year or is likely to run longer than 10 minutes, stop and report the exact planned commands, task count, outputs, and skip/overwrite behavior before running it.
+- Existing non-empty outputs must be skipped unless --overwrite is explicitly approved.
+- Do not treat --resume as the skip gate; verify that existing non-empty final outputs plus no --overwrite are what will skip work.
+- Do not set --batch-wait-timeout-seconds above 900 or --batch-poll-seconds below 15 unless explicitly approved.
+- Keep --workers at 4 or lower; use --workers 1 for the first smoke download after a failed or ambiguous run.
+- For downloads, run one market-year per command unless a larger batch is explicitly approved after dry-run review.
+- If a download has no visible progress for 10 minutes or reaches its wait timeout, stop and report partial status instead of starting the next command.
+
+Output/token guard:
+- Prefer targeted rg/Get-Content snippets and filesystem counts over full-file reads and broad recursive dumps.
+- Do not paste full JSON manifests, full logs, full diffs, full dry-run plans, or large path lists.
+- For audit results over 30 rows, report counts plus first 20 rows and the report/plan path that contains the full list.
+- Final task reports should stay to: files changed, commands run, tests/checks run, validation result, generated artifacts, git status, and unresolved risks.
+
 Global raw-layout contract:
 - Canonical OHLCV DBN chunks:
   data/dbn/ohlcv_1m/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst
@@ -18,24 +35,35 @@ Global raw-layout contract:
 
 Tasks, in order:
 
-1. Finish definition DBN coverage
+1. Audit and plan definition DBN coverage
    - Inspect current canonical OHLCV and definition coverage:
      - data/dbn/ohlcv_1m/{market}/{year}/
      - data/dbn/definition/{market}/{year}/
    - Ignore excluded markets: E7, J7, QI, QO, ZQ, PA.
    - Identify market-years where OHLCV exists but matching definition DBN is missing or zero-byte.
-   - Dry-run the smallest safe Phase 1A definition-only download plan first.
+   - Dry-run the smallest safe Phase 1A definition-only plan only for the missing market-years.
    - Confirm planned outputs are under:
      data/dbn/definition/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst
    - Do not use --overwrite.
-   - Do not run broad hard-coded year groups if a smaller missing-only plan is available.
-   - Then run definition downloads only for missing market-years.
+   - Do not download in this task.
+   - Report exact missing market-years when 30 or fewer; otherwise report counts, first 20 rows, and the plan/report path with the full list.
+   - Report dry-run commands, planned output path pattern, sampled output paths, and whether existing outputs will be skipped.
+   - Stop after reporting this task unless I say continue.
+
+2. Download missing definition DBNs
+   - Only use the missing-only plan produced by Task 1.
+   - Do not use broad hard-coded year groups.
+   - Do not use --overwrite.
+   - Use --schema definition with the canonical DBN root behavior verified by dry-run output paths.
+   - Use bounded batch waits from the long-running operation guard.
+   - Download only missing market-years.
+   - Stop after the first failed, timed-out, or ambiguous market-year.
    - After download, re-audit coverage and report remaining missing/zero-byte definition files.
    - Stop if definition coverage is incomplete.
    - Stop after reporting this task unless I say continue.
 
-2. Lock down Phase 1A/1B raw data layout and tests
-   - Review the current dirty changes in:
+3. Lock down Phase 1A/1B raw data layout and tests
+   - Review these files and any dirty changes in them, if present:
      - README.md
      - project_layout.md
      - scripts/phase1A_download/download_databento_raw.py
@@ -47,7 +75,7 @@ Tasks, in order:
    - After this task is completed and validated, discard CODEX DO NEXT.md only if explicitly asked.
    - Stop after reporting this task unless I say continue.
 
-3. Fix contract metadata / point-in-time definitions
+4. Fix contract metadata / point-in-time definitions
    - Inspect Phase 1B conversion and metadata handling.
    - Identify why definition_point_in_time_enforced is currently false.
    - Implement the smallest safe change needed so raw conversion uses correct point-in-time contract metadata where possible.
@@ -56,7 +84,7 @@ Tasks, in order:
    - Validate with focused Phase 1B tests.
    - Stop after reporting this task unless I say continue.
 
-4. Run Phase 1B bulk conversion
+5. Run Phase 1B bulk conversion
    - Only start after definition coverage is complete and point-in-time metadata behavior is validated.
    - If point-in-time metadata is blocked, stop and do not bulk convert unless explicitly approved.
    - Convert canonical OHLCV DBN chunks plus matching definition DBNs into:
@@ -65,10 +93,11 @@ Tasks, in order:
    - Do not use --overwrite unless explicitly approved.
    - Prefer a dry-run or small smoke conversion first if available.
    - Then run bulk conversion only for missing converted outputs, unless explicitly approved to rerun existing outputs.
-   - Report exact commands, row counts, output manifests, warnings, failures, generated artifacts, and final git status.
+   - If conversion spans more than one market-year, report the plan first and wait for explicit continue.
+   - Report exact commands, row counts, output manifests, warnings, failures, generated artifacts, and final git status without dumping large manifests/logs.
    - Stop after reporting this task unless I say continue.
 
-5. Replace provisional costs with real cost config
+6. Replace provisional costs with real cost config
    - Inspect configs/costs.yaml and Phase 3/Phase 4 cost validation.
    - Replace placeholder/provisional values only if reliable futures fee/commission assumptions are already available in repo docs/configs.
    - If reliable values are not available, create a clear non-code TODO/blocker note in the appropriate planning doc rather than inventing costs.
@@ -76,14 +105,14 @@ Tasks, in order:
    - Validate Phase 3/Phase 4 cost-related tests.
    - Stop after reporting this task unless I say continue.
 
-6. Run a small ES-only end-to-end build through Phase 4
+7. Run a small ES-only end-to-end build through Phase 4
    - Use the smallest existing ES sample/config path available.
    - Run Phase 1A/1B only if needed and safe; do not redownload large data unless explicitly approved.
    - Build or validate through Phase 4.
    - Report exact commands, row counts, schemas/manifest paths, warnings, and whether generated artifacts remain untracked.
    - Stop after reporting this task unless I say continue.
 
-7. Build Phase 5 WFA split planning
+8. Build Phase 5 WFA split planning
    - Add the smallest Phase 5 skeleton needed for walk-forward split planning.
    - Include purge/embargo, train/test windows, final holdout rules, manifest output, and tests.
    - Do not train models yet.
@@ -91,7 +120,7 @@ Tasks, in order:
    - Validate with focused tests and CLI help.
    - Stop after reporting this task unless I say continue.
 
-8. Add simple baseline models/rules
+9. Add simple baseline models/rules
    - Only proceed after Phase 5 is structurally valid.
    - Add simple fixed-rule or baseline model scaffolding first: logistic/ridge/simple baselines only.
    - No hyperparameter tuning beyond obvious defaults.
