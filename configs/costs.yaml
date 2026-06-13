@@ -1,5 +1,7 @@
 version: 1
 
+# Market coverage follows configs/alpha_tiered.yaml full_markets.
+# Project-wide excluded: E7, J7, QI, QO, ZQ, PA.
 markets:
   # Shared execution-cost assumptions.
   6A:

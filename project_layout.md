@@ -157,15 +157,15 @@ Operational profile model:
 
 ```text
 tier_0 = ES smoke test
-tier_1 = CL/ES/ZN recent core
-tier_2 = CL/ES/ZN long core
+tier_1 = ES/CL/ZN/6E recent core
+tier_2 = 15-market balanced research
 tier_3 = real full universe
 all_raw = inventory only
 metadata_optional_test = tests only
 ```
 
-`tier_1` is for frequent CL/ES/ZN iteration. `tier_2` is the same core over
-long history. `tier_3` is the actual 31-market GLBX-only research universe. `tier_1` results do not prove `tier_3`
+`tier_1` is for frequent ES/CL/ZN/6E iteration. `tier_2` is the balanced
+15-market research tier. `tier_3` is the actual 31-market GLBX-only research universe. `tier_1` results do not prove `tier_3`
 performance. Missing Tier-3 data must fail stage validation clearly; the
 pipeline must not shrink the Tier-3 universe to whatever data exists. `all_raw`
 is inventory only and must not feed labels, WFA, gates, or research decisions.
@@ -184,12 +184,13 @@ intraday_flatten_time
 roll_exclusion_bars
 ```
 
-Tier-1 machinery proof universe:
+Tier-1 core research universe:
 
 ```text
-CL
 ES
+CL
 ZN
+6E
 ```
 
 Tier-3 real research universe:
@@ -207,10 +208,12 @@ Year/profile policy:
 
 ```text
 downloaded_years = 2010-2026
-recent_research = 2023-2025
-long_research = 2010-2025
-forward_years = 2026
+recent_years = 2023-2025
+long_years = 2010-2025
 research_years = 2023-2024
+balanced_research_years = 2018-2024
+long_research_years = 2010-2024
+forward_years = 2026
 final_holdout_years = 2025
 entry_lag_bars = 1
 target_horizon_bars = 15
@@ -378,8 +381,12 @@ Current year policy:
 
 ```text
 downloaded_years = 2010-2026
-recent_research = 2023-2025
-long_research = 2010-2025
+recent_years = 2023-2025
+long_years = 2010-2025
+research_years = 2023-2024
+balanced_research_years = 2018-2024
+long_research_years = 2010-2024
+final_holdout_years = 2025
 forward_years = 2026
 ```
 
@@ -1378,8 +1385,10 @@ reports/wfa/split_plan.json
 ## Default research policy
 
 ```text
-recent_research = 2023-2025
-long_research = 2010-2025
+tier_1 research_years = 2023-2024
+tier_2 balanced_research_years = 2018-2024
+tier_3 long_research_years = 2010-2024
+final_holdout_years = 2025
 forward_years = 2026
 train_days = 365
 test_days = 30

@@ -28,15 +28,65 @@ DEFAULT_OUTPUT_ROOT = Path("data/feature_matrices/baseline")
 DEFAULT_REPORTS_ROOT = Path("reports/features_baseline")
 DEFAULT_COSTS_CONFIG = Path("configs/costs.yaml")
 DISCOVERY_PROFILES = {"all_labeled", "all_labeled_data", "all_raw", "all_raw_data"}
+CORE_PROFILE_MARKETS = ["ES", "CL", "ZN", "6E"]
+BALANCED_PROFILE_MARKETS = ["ES", "NQ", "CL", "NG", "GC", "HG", "SR3", "ZN", "ZB", "6E", "6J", "6B", "ZC", "ZS", "LE"]
+FULL_PROFILE_MARKETS = ["ES", "NQ", "RTY", "YM", "CL", "NG", "RB", "HO", "GC", "SI", "HG", "PL", "SR3", "ZT", "ZF", "ZN", "ZB", "UB", "6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "ZC", "ZS", "ZW", "LE", "HE"]
+RECENT_RESEARCH_YEARS = [2023, 2024]
+BALANCED_RESEARCH_YEARS = list(range(2018, 2025))
+LONG_RESEARCH_YEARS = list(range(2010, 2025))
+FINAL_HOLDOUT_YEARS = [2025]
+FORWARD_YEARS = [2026]
+STATIC_PROFILE_ALIASES = {
+    "tier_0_smoke": "tier_0",
+    "tier_1": "tier_1_research",
+    "tier_1_core": "tier_1_research",
+    "tier_1_core_recent": "tier_1_research",
+    "tier_1_recent": "tier_1_research",
+    "tier_1_final_holdout": "tier_1_holdout",
+    "tier_1_forward_2026": "tier_1_forward",
+    "tier_2": "tier_2_research",
+    "tier_2_long": "tier_2_research",
+    "tier_2_final_holdout": "tier_2_holdout",
+    "tier_2_forward_2026": "tier_2_forward",
+    "tier_3": "tier_3_research",
+    "tier_3_final_holdout": "tier_3_holdout",
+    "tier_3_forward_2026": "tier_3_forward",
+    "all_raw": "all_raw",
+}
+
 STATIC_PROFILE_MARKETS = {
-    "tier_1": ["CL", "ES", "ZN"],
-    "tier_2": ["CL", "ES", "ZN"],
+    "tier_0": ["ES"],
+    "tier_1": CORE_PROFILE_MARKETS,
+    "tier_1_research": CORE_PROFILE_MARKETS,
+    "tier_1_holdout": CORE_PROFILE_MARKETS,
+    "tier_1_forward": CORE_PROFILE_MARKETS,
+    "tier_2": BALANCED_PROFILE_MARKETS,
+    "tier_2_research": BALANCED_PROFILE_MARKETS,
+    "tier_2_holdout": BALANCED_PROFILE_MARKETS,
+    "tier_2_forward": BALANCED_PROFILE_MARKETS,
+    "tier_3": FULL_PROFILE_MARKETS,
+    "tier_3_research": FULL_PROFILE_MARKETS,
+    "tier_3_holdout": FULL_PROFILE_MARKETS,
+    "tier_3_forward": FULL_PROFILE_MARKETS,
+    "metadata_optional_test": ["ES"],
 }
 STATIC_PROFILE_YEARS = {
-    "tier_1": [2023, 2024, 2025],
-    "tier_2": list(range(2010, 2026)),
+    "tier_0": [2024],
+    "tier_1": RECENT_RESEARCH_YEARS,
+    "tier_1_research": RECENT_RESEARCH_YEARS,
+    "tier_1_holdout": FINAL_HOLDOUT_YEARS,
+    "tier_1_forward": FORWARD_YEARS,
+    "tier_2": BALANCED_RESEARCH_YEARS,
+    "tier_2_research": BALANCED_RESEARCH_YEARS,
+    "tier_2_holdout": FINAL_HOLDOUT_YEARS,
+    "tier_2_forward": FORWARD_YEARS,
+    "tier_3": LONG_RESEARCH_YEARS,
+    "tier_3_research": LONG_RESEARCH_YEARS,
+    "tier_3_holdout": FINAL_HOLDOUT_YEARS,
+    "tier_3_forward": FORWARD_YEARS,
+    "metadata_optional_test": [2024],
 }
-TIER1_MARKETS = ("CL", "ES", "ZN")
+TIER1_MARKETS = tuple(CORE_PROFILE_MARKETS)
 EPS = 1e-12
 PHASE3_LABEL_SEMANTICS_ID = "phase3_labels_v1_next_1m_open_to_15m_open"
 
@@ -143,9 +193,11 @@ FEATURE_FAMILIES: dict[str, list[str]] = {
         "feature_rel_ret_vs_ES_15",
         "feature_rel_ret_vs_ZN_15",
         "feature_rel_ret_vs_CL_15",
+        "feature_rel_ret_vs_6E_15",
         "feature_corr_vs_ES_60",
         "feature_corr_vs_ZN_60",
         "feature_corr_vs_CL_60",
+        "feature_corr_vs_6E_60",
         "feature_es_zn_divergence_30",
         "feature_cl_es_divergence_30",
     ],
@@ -389,6 +441,8 @@ def load_profile_map(
     discovery = set(DISCOVERY_PROFILES)
 
     payload = _read_yaml(profile_config_path)
+    if not payload:
+        aliases.update(STATIC_PROFILE_ALIASES)
     profiles = payload.get("profiles", {})
     if isinstance(profiles, Mapping):
         for profile_name, profile in profiles.items():
@@ -405,7 +459,7 @@ def load_profile_map(
 
     raw_aliases = payload.get("aliases", {})
     if isinstance(raw_aliases, Mapping):
-        aliases = {str(key): str(value) for key, value in raw_aliases.items()}
+        aliases.update({str(key): str(value) for key, value in raw_aliases.items()})
     return markets, years, aliases, discovery
 
 

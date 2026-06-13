@@ -71,14 +71,14 @@ Operational profiles live in `configs/alpha_tiered.yaml`.
 
 ```text
 tier_0 = ES smoke test
-tier_1 = CL/ES/ZN recent core
-tier_2 = CL/ES/ZN long core
+tier_1 = ES/CL/ZN/6E recent core
+tier_2 = 15-market balanced research
 tier_3 = exact 31-market GLBX-only long universe
 all_raw = inventory only
 metadata_optional_test = unit-test only
 ```
 
-Default profile: `tier_1`.
+Default profile: `tier_1_research` (`tier_1` alias).
 
 Use `tier_1` for current Phase 1-4 debugging. `tier_1` results do not
 prove `tier_3` performance; `tier_3` is the actual research universe. Missing
@@ -89,7 +89,7 @@ universe.
 
 Canonical implementation: `scripts/phase2_causal_base/build_causal_base_data.py`.
 
-Build the normalized causal base for the tier-1 machinery proof set:
+Build the normalized causal base for the tier-1 core set:
 
 ```powershell
 python -m scripts.phase2_causal_base.build_causal_base_data --profile tier_1
@@ -106,7 +106,7 @@ reports/causal_base/
 
 Canonical implementation: `scripts/phase3_labels/build_labels.py`.
 
-Build labels for the tier-1 machinery proof set:
+Build labels for the tier-1 core set:
 
 ```powershell
 python -m scripts.phase3_labels.build_labels --profile tier_1

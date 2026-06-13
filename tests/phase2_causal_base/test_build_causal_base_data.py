@@ -683,8 +683,8 @@ def test_profile_resolution_supports_all_raw_and_tier_profile(tmp_path: Path) ->
     tier = resolve_profile_inputs("tier_1", raw_root)
 
     assert [(market, year) for market, year, _ in all_raw] == [("ZN", 2025)]
-    assert len(tier) == 6
-    assert ("CL", 2023) in [(market, year) for market, year, _ in tier]
+    assert len(tier) == 8
+    assert ("6E", 2024) in [(market, year) for market, year, _ in tier]
 
 
 def test_boundary_sessions_are_not_causal_valid(tmp_path: Path) -> None:

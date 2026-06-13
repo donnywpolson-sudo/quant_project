@@ -15,19 +15,39 @@ defaults:
 
   recent_years: [2023, 2024, 2025]
   long_years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+  balanced_research_years: &balanced_research_years [2018, 2019, 2020, 2021, 2022, 2023, 2024]
   long_research_years: &long_research_years [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
   forward_years: &forward_years [2026]
 
   research_years: &research_years [2023, 2024]
   final_holdout_years: &final_holdout_years [2025]
 
-  core_markets: &core_markets ["CL", "ES", "ZN"]
+  core_markets: &core_markets ["ES", "CL", "ZN", "6E"]
+  balanced_markets: &balanced_markets ["ES", "NQ", "CL", "NG", "GC", "HG", "SR3", "ZN", "ZB", "6E", "6J", "6B", "ZC", "ZS", "LE"]
   full_markets: &full_markets ["ES", "NQ", "RTY", "YM", "CL", "NG", "RB", "HO", "GC", "SI", "HG", "PL", "SR3", "ZT", "ZF", "ZN", "ZB", "UB", "6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "ZC", "ZS", "ZW", "LE", "HE"]
 
   core_market_families: &core_market_families
-    CL: energy
     ES: equity_index
+    CL: energy
     ZN: rates
+    6E: fx
+
+  balanced_market_families: &balanced_market_families
+    ES: equity_index
+    NQ: equity_index
+    CL: energy
+    NG: energy
+    GC: metals
+    HG: metals
+    SR3: rates
+    ZN: rates
+    ZB: rates
+    6E: fx
+    6J: fx
+    6B: fx
+    ZC: ag_livestock
+    ZS: ag_livestock
+    LE: ag_livestock
 
   full_market_families: &full_market_families
     ES: equity_index
@@ -159,12 +179,13 @@ profile_requirements:
 
 profiles:
   tier_0:
-    description: "Smoke test: ES, 2025."
+    description: "Smoke test: ES, 2024."
     intent: smoke_test
     requirement_set: production_like
     settings_profile: smoke
     markets: ["ES"]
-    years: [2025]
+    years: [2024]
+    forbid_research_use: true
 
   metadata_optional_test:
     description: "Unit-test-only relaxed raw schema."
@@ -176,7 +197,7 @@ profiles:
     forbid_research_use: true
 
   tier_1_research:
-    description: "Core research: CL/ES/ZN, 2023-2024."
+    description: "Core research: ES/CL/ZN/6E, 2023-2024."
     intent: core_recent_research
     requirement_set: production_like
     settings_profile: recent_research
@@ -185,7 +206,7 @@ profiles:
     market_families: *core_market_families
 
   tier_1_holdout:
-    description: "Core holdout: CL/ES/ZN, 2025."
+    description: "Core holdout: ES/CL/ZN/6E, 2025."
     intent: core_final_holdout
     requirement_set: production_like
     settings_profile: recent_research
@@ -195,7 +216,7 @@ profiles:
     market_families: *core_market_families
 
   tier_1_forward:
-    description: "Core forward: CL/ES/ZN, 2026."
+    description: "Core forward: ES/CL/ZN/6E, 2026."
     intent: core_forward_validation
     requirement_set: production_like
     settings_profile: recent_research
@@ -205,33 +226,33 @@ profiles:
     market_families: *core_market_families
 
   tier_2_research:
-    description: "Core long research: CL/ES/ZN, 2010-2024."
-    intent: core_long_research
+    description: "Balanced research: 15 markets, 2018-2024."
+    intent: balanced_medium_research
     requirement_set: production_like
     settings_profile: long_research
-    markets: *core_markets
-    years: *long_research_years
-    market_families: *core_market_families
+    markets: *balanced_markets
+    years: *balanced_research_years
+    market_families: *balanced_market_families
 
   tier_2_holdout:
-    description: "Core long holdout: CL/ES/ZN, 2025."
-    intent: core_long_final_holdout
+    description: "Balanced holdout: 15 markets, 2025."
+    intent: balanced_final_holdout
     requirement_set: production_like
     settings_profile: long_research
-    markets: *core_markets
+    markets: *balanced_markets
     years: *final_holdout_years
     forbid_research_use: true
-    market_families: *core_market_families
+    market_families: *balanced_market_families
 
   tier_2_forward:
-    description: "Core long forward: CL/ES/ZN, 2026."
-    intent: core_long_forward_validation
+    description: "Balanced forward: 15 markets, 2026."
+    intent: balanced_forward_validation
     requirement_set: production_like
     settings_profile: long_research
-    markets: *core_markets
+    markets: *balanced_markets
     years: *forward_years
     forbid_research_use: true
-    market_families: *core_market_families
+    market_families: *balanced_market_families
 
   tier_3_research:
     description: "Full-universe research: 31 markets, 2010-2024."
@@ -284,8 +305,6 @@ aliases:
   tier_1_recent: tier_1_research
   tier_1_final_holdout: tier_1_holdout
   tier_1_forward_2026: tier_1_forward
-  tier_1_long: tier_2_research
-  tier_1_core_long: tier_2_research
   tier_2: tier_2_research
   tier_2_long: tier_2_research
   tier_2_final_holdout: tier_2_holdout

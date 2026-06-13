@@ -131,12 +131,14 @@ def _write_costs(path: Path, market: str = "ES", tick_size: float = 0.25) -> Pat
 def test_profile_aliases_resolve_for_phase4() -> None:
     inputs = resolve_profile_inputs("tier_1", ROOT / "data" / "labeled")
     assert [(market, year) for market, year, _ in inputs] == [
-        ("CL", 2023),
-        ("CL", 2024),
         ("ES", 2023),
         ("ES", 2024),
+        ("CL", 2023),
+        ("CL", 2024),
         ("ZN", 2023),
         ("ZN", 2024),
+        ("6E", 2023),
+        ("6E", 2024),
     ]
 
 
@@ -264,7 +266,7 @@ def test_higher_timeframe_returns_require_full_valid_lookback() -> None:
 
 def test_intermarket_features_use_exact_timestamps_and_no_self_target_columns(tmp_path: Path) -> None:
     root = tmp_path / "labeled"
-    for market in ("CL", "ES", "ZN"):
+    for market in ("CL", "ES", "ZN", "6E"):
         df = _frame(70, market=market)
         if market == "ES":
             df["ts"] = df["ts"] + pd.Timedelta(seconds=30)
@@ -282,7 +284,7 @@ def test_intermarket_features_use_exact_timestamps_and_no_self_target_columns(tm
 
 def test_intermarket_returns_require_other_market_full_valid_lookback(tmp_path: Path) -> None:
     root = tmp_path / "labeled"
-    for market in ("CL", "ES", "ZN"):
+    for market in ("CL", "ES", "ZN", "6E"):
         df = _frame(80, market=market)
         if market == "ES":
             df.loc[10, "is_synthetic"] = True
@@ -298,7 +300,7 @@ def test_intermarket_returns_require_other_market_full_valid_lookback(tmp_path: 
 
 def test_tier1_risk_score_is_usable_without_zero_filling_self_market(tmp_path: Path) -> None:
     root = tmp_path / "labeled"
-    for market in ("CL", "ES", "ZN"):
+    for market in ("CL", "ES", "ZN", "6E"):
         path = root / market / "2024.parquet"
         path.parent.mkdir(parents=True, exist_ok=True)
         _frame(90, market=market).to_parquet(path, index=False)
