@@ -1,8 +1,15 @@
-# quant_project instructions
+# futures_intraday_model instructions
 
 Respond token-efficiently. Correctness and reproducibility > concision.
 
 Primary rule: do exactly the requested task with the smallest safe change.
+
+Scope and worktree hygiene:
+
+* Work only in the active Git repo unless explicitly asked.
+* Before editing, inspect repo path and `git status --short`.
+* Do not stage, commit, delete, move, or rename files unless explicitly asked.
+* Do not add dependencies, perform broad refactors, or create generated artifacts unless explicitly asked.
 
 Communication/token policy:
 
@@ -12,6 +19,7 @@ Communication/token policy:
 * Prefer targeted searches/snippets over full-file reads.
 * Do not dump long logs, full files, or full diffs unless required.
 * Report only: blockers, files changed, commands run, validation result, metric/schema/row-count changes, and unresolved risks.
+* For ordered multi-task prompts, finish only the current task and stop after reporting unless explicitly told to continue.
 * If a broad read/search would consume lots of context, narrow it first or ask.
 
 Hard safety rules:
@@ -21,6 +29,7 @@ Hard safety rules:
 * Do not change public contracts unless explicitly asked: CLI args, config keys, column names, file paths, output schemas, report fields, manifests, or test expectations.
 * Do not tune model hyperparameters until data integrity, target construction, leakage checks, purge/embargo, and cost modeling are verified.
 * Do not change trading/data semantics unless explicitly asked.
+* Never store secrets, tokens, API keys, credentials, or private keys in repo files, prompts, memory, or config.
 
 Core quant logic is protected:
 
@@ -48,6 +57,7 @@ Validation:
 * Run the narrowest relevant test/check after edits.
 * For data/model/WFA changes, report exact commands, files changed, metrics changed, row-count changes, and warnings.
 * After validation, run `git status --short` and confirm generated artifacts are not tracked.
+* Final reports after edits must include files changed, commands run, tests/checks run, validation result, git status summary, and unresolved risks.
 
 ## Codex command sandbox handling
 

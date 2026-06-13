@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-time Databento raw OHLCV download helper.
 
-Default mode downloads raw Databento DBN/Zstd batch files under data/raw.
+Default mode downloads raw Databento DBN/Zstd batch files under data/dbn.
 Use --mode convert-parquet to stitch already-downloaded DBN files into data/raw.
 Use --mode stream only when you
 intentionally want immediate Parquet output from timeseries.get_range.
@@ -55,7 +55,7 @@ STYPE_OUT = "instrument_id"
 START_YEAR = 2010
 DEFAULT_RAW_OUT = "data/raw"
 DEFAULT_STREAM_OUT = DEFAULT_RAW_OUT
-DEFAULT_DBN_OUT = DEFAULT_RAW_OUT
+DEFAULT_DBN_OUT = "data/dbn/ohlcv_1m"
 DEFAULT_BATCH_OUT = DEFAULT_DBN_OUT
 DEFAULT_REPORTS_ROOT = "reports/raw_ingest"
 DEFAULT_WORKERS = 4
@@ -368,6 +368,14 @@ def schema_path_name(schema: str) -> str:
     return SCHEMA_PATHS[schema]
 
 
+def dbn_schema_root(output_root: Path, schema: str) -> Path:
+    if schema == SCHEMA:
+        return output_root
+    if output_root.name == schema_path_name(SCHEMA):
+        return output_root.parent / schema_path_name(schema)
+    return output_root / schema_path_name(schema)
+
+
 def task_output_path(
     output_root: Path,
     *,
@@ -381,15 +389,9 @@ def task_output_path(
     raw_format: str,
 ) -> str:
     if mode in DBN_DOWNLOAD_MODES:
-        schema_root = output_root if schema == SCHEMA else output_root / schema_path_name(schema)
-        if chunk == "none":
-            label = f"{start}_to_{end}"
-            return (schema_root / product / f"{label}.dbn.zst").as_posix()
-        label = chunk_label(start, chunk)
+        schema_root = dbn_schema_root(output_root, schema)
         year = str(date.fromisoformat(start).year)
-        if chunk == "year":
-            return (schema_root / product / f"{year}.dbn.zst").as_posix()
-        return (schema_root / product / year / f"{label}.dbn.zst").as_posix()
+        return (schema_root / product / year / f"{start}_{end}.dbn.zst").as_posix()
     label = chunk_label(start, chunk)
     suffix = ".parquet"
     return (output_root / product / f"{label}{suffix}").as_posix()
@@ -1037,6 +1039,8 @@ def convert_existing_dbn_tree(root: Path, *, overwrite: bool = False) -> list[di
     results: list[dict[str, object]] = []
     dbn_paths = iter_dbn_files(root)
     for path in dbn_paths:
+        if schema_path_name("definition") in path.parts:
+            continue
         out = dbn_parquet_path(path)
         started = time.monotonic()
         try:
@@ -1080,34 +1084,64 @@ def convert_existing_dbn_tree(root: Path, *, overwrite: bool = False) -> list[di
     return results
 
 
+DBN_ARCHIVE_LAYOUT_ERROR = (
+    "cannot infer market/year from DBN path; expected "
+    "data/dbn/ohlcv_1m/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst "
+    "or legacy data/raw/{market}/{year}.dbn.zst"
+)
+
+
+def dbn_file_stem(path: Path) -> str:
+    if path.name.endswith(".dbn.zst"):
+        return path.name.removesuffix(".dbn.zst")
+    return path.name.removesuffix(".dbn")
+
+
+def legacy_dbn_filename_year(path: Path) -> int | None:
+    stem = dbn_file_stem(path)
+    return int(stem) if stem.isdigit() else None
+
+
+def validate_chunk_date_filename(path: Path, year: int) -> None:
+    stem = dbn_file_stem(path)
+    parts = stem.split("_")
+    if len(parts) != 2:
+        raise ValueError(DBN_ARCHIVE_LAYOUT_ERROR)
+    try:
+        start = date.fromisoformat(parts[0])
+        end = date.fromisoformat(parts[1])
+    except ValueError as exc:
+        raise ValueError(DBN_ARCHIVE_LAYOUT_ERROR) from exc
+    if start.year != year or end <= start or end > date(year + 1, 1, 1):
+        raise ValueError(DBN_ARCHIVE_LAYOUT_ERROR)
+
+
 def infer_dbn_archive_entry(path: Path, dbn_root: Path) -> DbnArchiveEntry:
     try:
         parts = path.relative_to(dbn_root).parts
     except ValueError:
-        parts = path.parts
-    if len(parts) in {2, 3, 4}:
-        if len(parts) == 4 and parts[0] == VENDOR:
-            schema_dir, product, filename = parts[1], parts[2], parts[3]
-        elif len(parts) == 3:
-            schema_dir = parts[0]
-            product = parts[1]
-            filename = parts[2]
-        else:
-            schema_dir = ""
-            product = parts[0]
-            filename = parts[1]
-        if schema_dir and schema_dir != schema_path_name("ohlcv-1m"):
-            raise ValueError(
-                "cannot infer market/year from DBN path; expected "
-                "data/raw/{market}/{year}.dbn.zst"
-            )
-        year_text = filename.removesuffix(".dbn.zst").removesuffix(".dbn")
-        if year_text.isdigit():
-            return DbnArchiveEntry(path=path, product=product, year=int(year_text))
-    raise ValueError(
-        "cannot infer market/year from DBN path; expected "
-        "data/raw/{market}/{year}.dbn.zst"
-    )
+        parts = ()
+    if schema_path_name("definition") in parts or schema_path_name("definition") in path.parts:
+        raise ValueError(DBN_ARCHIVE_LAYOUT_ERROR)
+    if len(parts) >= 2 and parts[0] == VENDOR:
+        parts = parts[1:]
+    if parts and parts[0] == schema_path_name(SCHEMA):
+        parts = parts[1:]
+    if len(parts) == 3 and parts[1].isdigit():
+        product = parts[0]
+        year = int(parts[1])
+        validate_chunk_date_filename(path, year)
+        return DbnArchiveEntry(path=path, product=product, year=year)
+    if len(parts) == 2:
+        year = legacy_dbn_filename_year(path)
+        if year is not None:
+            return DbnArchiveEntry(path=path, product=parts[0], year=year)
+    year = legacy_dbn_filename_year(path)
+    if year is not None:
+        product = path.parent.name
+        if product and product not in {schema_path_name("definition"), schema_path_name(SCHEMA), VENDOR}:
+            return DbnArchiveEntry(path=path, product=product, year=year)
+    raise ValueError(DBN_ARCHIVE_LAYOUT_ERROR)
 
 
 def archive_entries_for_paths(
@@ -1124,7 +1158,7 @@ def archive_entries_for_paths(
             relative_parts = path.relative_to(dbn_root).parts
         except ValueError:
             relative_parts = path.parts
-        if schema_path_name("definition") in relative_parts:
+        if schema_path_name("definition") in relative_parts or schema_path_name("definition") in path.parts:
             continue
         entry = infer_dbn_archive_entry(path, dbn_root)
         if products is not None and entry.product not in products:
@@ -1142,38 +1176,88 @@ def dbn_paths_for_tasks(tasks: Iterable[DownloadTask]) -> list[Path]:
     return sorted(set(paths))
 
 
-def definition_path_for_group(dbn_root: Path, product: str, year: int) -> Path:
-    if dbn_root.name == schema_path_name("ohlcv-1m"):
-        base = dbn_root.parent / schema_path_name("definition")
-    elif dbn_root.name == VENDOR:
-        base = dbn_root / schema_path_name("definition")
+def definition_root_for_dbn_root(dbn_root: Path) -> Path:
+    if dbn_root.name == schema_path_name(SCHEMA):
+        return dbn_root.parent / schema_path_name("definition")
+    if dbn_root.name == VENDOR:
+        return dbn_root / schema_path_name("definition")
+    return dbn_root / schema_path_name("definition")
+
+
+def definition_paths_for_group(
+    dbn_root: Path,
+    product: str,
+    year: int,
+    *,
+    raw_root: Path | None = None,
+) -> list[Path]:
+    base = definition_root_for_dbn_root(dbn_root)
+    canonical_dir = base / product / str(year)
+    paths: list[Path] = []
+    if canonical_dir.exists():
+        paths.extend(iter_dbn_files(canonical_dir))
+    legacy_candidates = [
+        base / product / f"{year}.dbn.zst",
+        dbn_root / VENDOR / schema_path_name("definition") / product / f"{year}.dbn.zst",
+    ]
+    if raw_root is not None:
+        legacy_candidates.append(raw_root / schema_path_name("definition") / product / f"{year}.dbn.zst")
+    for candidate in legacy_candidates:
+        if candidate.exists() and is_dbn_file(candidate):
+            paths.append(candidate)
+    return sorted(set(paths))
+
+
+def expected_definition_path_for_group(dbn_root: Path, product: str, year: int) -> Path:
+    base = definition_root_for_dbn_root(dbn_root)
+    return base / product / str(year)
+
+
+def discovery_dbn_files(dbn_root: Path, raw_root: Path) -> list[Path]:
+    paths = iter_dbn_files(dbn_root) if dbn_root.exists() else []
+    if paths:
+        return sorted(set(paths))
+    if raw_root != dbn_root and raw_root.exists():
+        paths = iter_dbn_files(raw_root)
+    if not paths and not dbn_root.exists():
+        raise FileNotFoundError(f"DBN input root does not exist: {dbn_root}")
+    return sorted(set(paths))
+
+
+def definition_frame_for_group(
+    dbn_root: Path,
+    product: str,
+    year: int,
+    *,
+    raw_root: Path | None = None,
+) -> tuple[pd.DataFrame, list[Path]]:
+    paths = definition_paths_for_group(dbn_root, product, year, raw_root=raw_root)
+    if not paths:
+        raise ValueError(
+            f"missing definition file: {expected_definition_path_for_group(dbn_root, product, year).as_posix()}"
+        )
+    frames: list[pd.DataFrame] = []
+    for path in paths:
+        manifest_failures = validate_raw_file_manifest(
+            path,
+            expected_schema="definition",
+            expected_market=product,
+            expected_year=year,
+        )
+        if manifest_failures:
+            raise ValueError("definition manifest validation failed: " + "; ".join(manifest_failures))
+        import databento as db
+
+        store = db.DBNStore.from_file(path)
+        df_or_frames = cast(DatabentoStore, store).to_df()
+        if isinstance(df_or_frames, pd.DataFrame):
+            frames.append(df_or_frames)
+        else:
+            frames.append(pd.concat(df_or_frames, ignore_index=False))
+    if len(frames) == 1:
+        df = frames[0]
     else:
-        base = dbn_root / schema_path_name("definition")
-    path = base / product / f"{year}.dbn.zst"
-    legacy_path = dbn_root / VENDOR / schema_path_name("definition") / product / f"{year}.dbn.zst"
-    return legacy_path if legacy_path.exists() and not path.exists() else path
-
-
-def definition_frame_for_group(dbn_root: Path, product: str, year: int) -> tuple[pd.DataFrame, Path]:
-    path = definition_path_for_group(dbn_root, product, year)
-    if not path.exists():
-        raise ValueError(f"missing definition file: {path.as_posix()}")
-    manifest_failures = validate_raw_file_manifest(
-        path,
-        expected_schema="definition",
-        expected_market=product,
-        expected_year=year,
-    )
-    if manifest_failures:
-        raise ValueError("definition manifest validation failed: " + "; ".join(manifest_failures))
-    import databento as db
-
-    store = db.DBNStore.from_file(path)
-    df_or_frames = cast(DatabentoStore, store).to_df()
-    if isinstance(df_or_frames, pd.DataFrame):
-        df = df_or_frames
-    else:
-        df = pd.concat(df_or_frames, ignore_index=False)
+        df = pd.concat(frames, ignore_index=False)
     missing = [field for field in REQUIRED_DEFINITION_FIELDS if field not in df.columns]
     if missing:
         raise ValueError("definition missing required fields: " + ",".join(missing))
@@ -1185,7 +1269,7 @@ def definition_frame_for_group(dbn_root: Path, product: str, year: int) -> tuple
     tick_size = pd.to_numeric(df["min_price_increment"], errors="coerce")
     if tick_size.isna().any() or tick_size.le(0).any():
         raise ValueError("definition has missing or nonpositive min_price_increment")
-    return df, path
+    return df, paths
 
 
 def latest_definition_metadata(definitions: pd.DataFrame) -> pd.DataFrame:
@@ -1251,7 +1335,7 @@ def fetch_conditions_for_archive_entries(
     for entry in entries:
         task = condition_task_for_archive_entry(entry)
         info = fetch_dataset_conditions(client, task)
-        conditions_by_group[(entry.product, entry.year)] = info["conditions"]
+        conditions_by_group.setdefault((entry.product, entry.year), {}).update(info["conditions"])
     return conditions_by_group
 
 
@@ -1290,7 +1374,7 @@ def convert_dbn_archive_to_raw(
     condition_by_group: dict[tuple[str, int], dict[str, str]] | None = None,
     default_quality_status: str = "metadata_unavailable",
 ) -> list[dict[str, object]]:
-    source_paths = list(paths) if paths is not None else iter_dbn_files(dbn_root)
+    source_paths = list(paths) if paths is not None else discovery_dbn_files(dbn_root, raw_root)
     entries = archive_entries_for_paths(source_paths, dbn_root, products=products)
     groups: dict[tuple[str, int], list[Path]] = {}
     for entry in entries:
@@ -1326,8 +1410,14 @@ def convert_dbn_archive_to_raw(
                 raise ValueError(
                     "missing dataset-condition metadata for canonical raw conversion"
                 )
-            definitions, definition_path = definition_frame_for_group(dbn_root, product, year)
-            input_hashes[definition_path.as_posix()] = file_sha256(definition_path)
+            definitions, definition_paths = definition_frame_for_group(
+                dbn_root,
+                product,
+                year,
+                raw_root=raw_root,
+            )
+            for definition_path in definition_paths:
+                input_hashes[definition_path.as_posix()] = file_sha256(definition_path)
             skipped = has_non_empty_output(out) and not overwrite
             if skipped:
                 check = validate_download(out)
@@ -1395,7 +1485,8 @@ def convert_dbn_archive_to_raw(
                     "market": product,
                     "year": year,
                     "input_paths": [path.as_posix() for path in group_paths],
-                    "definition_path": definition_path.as_posix(),
+                    "definition_path": definition_paths[0].as_posix(),
+                    "definition_paths": [path.as_posix() for path in definition_paths],
                     "input_hashes": input_hashes,
                     "output_path": out.as_posix(),
                     "output_hash": file_sha256(out),
@@ -1501,6 +1592,67 @@ def build_raw_ingest_manifest(
         "failure_count": len(failed),
         "outputs": results,
     }
+
+
+def build_dbn_download_manifest(
+    results: list[dict[str, object]],
+    *,
+    mode: str,
+    dbn_root: Path,
+    raw_root: Path,
+    run_id: object | None = None,
+    plan_hash: object | None = None,
+    schema: str | None = None,
+) -> dict[str, object]:
+    selected = [
+        item for item in results if schema is None or item.get("schema") == schema
+    ]
+    status_counts = {
+        str(status): sum(1 for item in selected if item.get("status") == status)
+        for status in sorted({item.get("status") for item in selected})
+    }
+    return {
+        "stage": "raw_ingest",
+        "mode": mode,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,
+        "plan_hash": plan_hash,
+        "dbn_root": dbn_root.as_posix(),
+        "raw_root": raw_root.as_posix(),
+        "schema": schema or "all",
+        "schemas": sorted({str(item.get("schema")) for item in selected if item.get("schema")}),
+        "chunk_count": len(selected),
+        "status_counts": status_counts,
+        "outputs": selected,
+    }
+
+
+def dbn_chunk_manifest_rows(results: list[dict[str, object]]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for item in results:
+        rows.append(
+            {
+                "status": item.get("status"),
+                "schema": item.get("schema"),
+                "market": item.get("product") or item.get("market"),
+                "year": item.get("year"),
+                "start": item.get("start"),
+                "end": item.get("end"),
+                "chunk": item.get("chunk"),
+                "output_path": item.get("output_path"),
+                "manifest_path": item.get("manifest_path"),
+                "bytes": item.get("bytes"),
+                "job_id": item.get("job_id"),
+                "run_id": item.get("run_id"),
+                "plan_hash": item.get("plan_hash"),
+            }
+        )
+    return rows
+
+
+def write_dbn_chunk_manifest_csv(path: Path, results: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(dbn_chunk_manifest_rows(results)).to_csv(path, index=False)
 
 
 def request_range_dataframe(
@@ -2242,14 +2394,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  # Default raw OHLCV DBN/Zstd batch output under data/raw/{market}/{year}.dbn.zst.
+  # Default raw OHLCV DBN/Zstd batch output under data/dbn/ohlcv_1m/{market}/{year}/{start}_{end}.dbn.zst.
   python scripts\\phase1A_download\\download_databento_raw.py --markets ES,NQ --start 2023-01-01 --end 2024-01-01 --workers 1 --resume
 
   # Fast planning check with monthly chunks and no API calls.
   python scripts\\phase1A_download\\download_databento_raw.py --markets ES,NQ --start 2023-01-01 --end 2023-03-01 --chunk month --dry-run
 
-  # Convert already-downloaded data/raw/{market}/{year}.dbn.zst to data/raw/{market}/{year}.parquet.
-  python scripts\\phase1B_convert\\convert_databento_raw.py --dbn-root data/raw --raw-root data/raw
+  # Convert already-downloaded DBN chunks to data/raw/{market}/{year}.parquet.
+  python scripts\\phase1B_convert\\convert_databento_raw.py --dbn-root data/dbn/ohlcv_1m --raw-root data/raw
 
   # Intentional old behavior: immediate yearly Parquet stream output under data/raw.
   python scripts\\phase1A_download\\download_databento_raw.py --mode stream --raw-format parquet --markets ES,NQ --start-year 2023 --end-year 2025
@@ -2324,7 +2476,7 @@ def main() -> int:
                 raise SystemExit(str(exc)) from exc
         dbn_root = effective_output_root(args)
         raw_root = effective_raw_root(args)
-        source_paths = list(iter_dbn_files(dbn_root))
+        source_paths = discovery_dbn_files(dbn_root, raw_root)
         entries = archive_entries_for_paths(source_paths, dbn_root, products=products)
         condition_by_group = (
             fetch_conditions_for_archive_entries(get_client(), entries)
@@ -2342,6 +2494,15 @@ def main() -> int:
         write_json(report_path(args, "databento_convert_results.json"), results)
         write_json(
             report_path(args, "raw_ingest_manifest.json"),
+            build_raw_ingest_manifest(
+                results,
+                mode=args.mode,
+                dbn_root=dbn_root,
+                raw_root=raw_root,
+            ),
+        )
+        write_json(
+            report_path(args, "raw_parquet_manifest.json"),
             build_raw_ingest_manifest(
                 results,
                 mode=args.mode,
@@ -2497,6 +2658,34 @@ def main() -> int:
         )
     results = add_result_provenance(results, plan)
     write_json(report_path(args, "databento_download_results.json"), results)
+    write_json(
+        report_path(args, "dbn_download_manifest.json"),
+        build_dbn_download_manifest(
+            results,
+            mode=args.mode,
+            dbn_root=output_root,
+            raw_root=raw_root,
+            run_id=plan["run_id"],
+            plan_hash=plan["plan_hash"],
+        ),
+    )
+    write_dbn_chunk_manifest_csv(report_path(args, "dbn_chunk_manifest.csv"), results)
+    definition_results = [
+        item for item in results if item.get("schema") == schema_path_name("definition")
+    ]
+    if definition_results:
+        write_json(
+            report_path(args, "definition_download_manifest.json"),
+            build_dbn_download_manifest(
+                definition_results,
+                mode=args.mode,
+                dbn_root=output_root,
+                raw_root=raw_root,
+                run_id=plan["run_id"],
+                plan_hash=plan["plan_hash"],
+                schema="definition",
+            ),
+        )
     failed = [item for item in results if item.get("status") not in {"ok", "ok_existing"}]
     if args.mode == "all" and not failed:
         conditions = fetch_conditions_by_group(client, tasks)
@@ -2511,6 +2700,17 @@ def main() -> int:
         write_json(report_path(args, "databento_convert_results.json"), convert_results)
         write_json(
             report_path(args, "raw_ingest_manifest.json"),
+            build_raw_ingest_manifest(
+                convert_results,
+                mode=args.mode,
+                dbn_root=output_root,
+                raw_root=raw_root,
+                run_id=plan["run_id"],
+                plan_hash=plan["plan_hash"],
+            ),
+        )
+        write_json(
+            report_path(args, "raw_parquet_manifest.json"),
             build_raw_ingest_manifest(
                 convert_results,
                 mode=args.mode,

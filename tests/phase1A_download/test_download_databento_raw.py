@@ -22,12 +22,14 @@ from scripts.phase1A_download.download_databento_raw import (
     add_result_provenance,
     build_raw_ingest_manifest,
     build_arg_parser,
+    build_dbn_download_manifest,
     batch_split_duration_for_chunk,
     build_raw_file_manifest,
     condition_is_degraded,
     convert_dbn_archive_to_raw,
     convert_dbn_files_to_parquet,
     dataset_for_product,
+    dbn_chunk_manifest_rows,
     dbn_parquet_path,
     dry_run_plan_path,
     effective_output_root,
@@ -254,10 +256,10 @@ def test_default_roots_match_public_raw_ingest_contract() -> None:
     assert args.chunk == "year"
     assert args.workers == 4
     assert args.end_date == (date.today() - timedelta(days=1)).isoformat()
-    assert args.dbn_root == "data/raw"
+    assert args.dbn_root == "data/dbn/ohlcv_1m"
     assert args.raw_root == "data/raw"
     assert args.reports_root == "reports/raw_ingest"
-    assert effective_output_root(args) == Path("data/raw")
+    assert effective_output_root(args) == Path("data/dbn/ohlcv_1m")
 
 
 def test_default_batch_plan_is_archive_only_market_year_dbn() -> None:
@@ -534,9 +536,9 @@ def test_iter_range_tasks_builds_market_year_dbn_files(tmp_path: Path) -> None:
         ("NQ", "2024-01-01", "2025-01-01", "year"),
     ]
     assert Path(tasks[0].output_path).parts[-3:] == (
-        "raw",
         "ES",
-        "2024.dbn.zst",
+        "2024",
+        "2024-01-01_2025-01-01.dbn.zst",
     )
     assert batch_split_duration_for_chunk("year") == "year"
 
@@ -583,7 +585,7 @@ def test_iter_range_tasks_builds_batch_dbn_zstd_jobs_with_parent_symbols(
     assert Path(tasks[0].output_path).parts[-3:] == (
         "ES",
         "2024",
-        "2024-01.dbn.zst",
+        "2024-01-01_2024-02-01.dbn.zst",
     )
 
 
@@ -1436,6 +1438,126 @@ def test_convert_dbn_archive_fails_when_definition_mapping_missing(
     assert not (dbn_root / "ES" / "2024.parquet").exists()
 
 
+def test_convert_dbn_archive_groups_multiple_canonical_ohlcv_chunks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    converted_df = pd.DataFrame(
+        {
+            "ts_event": [
+                pd.Timestamp("2024-01-02T15:00:00Z"),
+                pd.Timestamp("2024-01-03T15:00:00Z"),
+            ],
+            "open": [1.0, 1.0],
+            "high": [2.0, 2.0],
+            "low": [0.5, 0.5],
+            "close": [1.5, 1.5],
+            "volume": [10, 10],
+            "rtype": [33, 33],
+            "publisher_id": [1, 1],
+            "instrument_id": [100, 100],
+            "symbol": ["ESH4", "ESH4"],
+            "raw_symbol": ["ESH4", "ESH4"],
+            "min_price_increment": [0.25, 0.25],
+            "contract_multiplier": [50.0, 50.0],
+        }
+    )
+    dbn_root = tmp_path / "data" / "dbn" / "ohlcv_1m"
+    raw_root = tmp_path / "data" / "raw"
+    dbn_paths = [
+        dbn_root / "ES" / "2024" / "2024-01-01_2024-02-01.dbn.zst",
+        dbn_root / "ES" / "2024" / "2024-02-01_2024-03-01.dbn.zst",
+    ]
+    definition_path = (
+        tmp_path
+        / "data"
+        / "dbn"
+        / "definition"
+        / "ES"
+        / "2024"
+        / "2024-01-01_2025-01-01.dbn.zst"
+    )
+    for path in [*dbn_paths, definition_path]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"dbn-zstd-placeholder")
+    for path in dbn_paths:
+        _write_raw_manifest(path, schema="ohlcv-1m")
+    _write_raw_manifest(definition_path, schema="definition")
+
+    class FakeDBNStore:
+        @classmethod
+        def from_file(cls, path: Path) -> FakeStore:
+            df = converted_df.copy()
+            if path == dbn_paths[1]:
+                df["ts_event"] = df["ts_event"] + pd.Timedelta(days=31)
+            return FakeStore(df)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "databento",
+        types.SimpleNamespace(DBNStore=FakeDBNStore),
+    )
+
+    results = convert_dbn_archive_to_raw(
+        dbn_root,
+        raw_root,
+        condition_by_group={("ES", 2024): {"2024-01-03": "degraded"}},
+    )
+
+    output_path = raw_root / "ES" / "2024.parquet"
+    assert results[0]["status"] == "ok"
+    assert sorted(results[0]["input_paths"]) == sorted(path.as_posix() for path in dbn_paths)
+    assert results[0]["definition_paths"] == [definition_path.as_posix()]
+    assert output_path.exists()
+    assert len(pd.read_parquet(output_path)) == 4
+    assert not (raw_root / "definition" / "ES" / "2024.parquet").exists()
+
+
+def test_convert_dbn_archive_discovers_legacy_flat_dbn_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    converted_df = pd.DataFrame(
+        {
+            "ts_event": [pd.Timestamp("2024-01-02T15:00:00Z")],
+            "open": [1.0],
+            "high": [2.0],
+            "low": [0.5],
+            "close": [1.5],
+            "volume": [10],
+            "rtype": [33],
+            "publisher_id": [1],
+            "instrument_id": [100],
+            "symbol": ["ESH4"],
+            "raw_symbol": ["ESH4"],
+            "min_price_increment": [0.25],
+            "contract_multiplier": [50.0],
+        }
+    )
+    install_fake_databento_store(monkeypatch, converted_df)
+    dbn_root = tmp_path / "data" / "dbn" / "ohlcv_1m"
+    raw_root = tmp_path / "data" / "raw"
+    legacy_dbn = raw_root / "ES" / "2024.dbn.zst"
+    legacy_definition = raw_root / "definition" / "ES" / "2024.dbn.zst"
+    legacy_dbn.parent.mkdir(parents=True)
+    legacy_definition.parent.mkdir(parents=True)
+    legacy_dbn.write_bytes(b"dbn-zstd-placeholder")
+    legacy_definition.write_bytes(b"definition-placeholder")
+    _write_raw_manifest(legacy_dbn, schema="ohlcv-1m")
+    _write_raw_manifest(legacy_definition, schema="definition")
+
+    results = convert_dbn_archive_to_raw(
+        dbn_root,
+        raw_root,
+        condition_by_group={("ES", 2024): {"2024-01-02": "available"}},
+    )
+
+    assert results[0]["status"] == "ok"
+    assert results[0]["input_paths"] == [legacy_dbn.as_posix()]
+    assert results[0]["definition_paths"] == [legacy_definition.as_posix()]
+    assert (raw_root / "ES" / "2024.parquet").exists()
+
+
 def test_convert_dbn_archive_rejects_nested_chunk_layout(tmp_path: Path) -> None:
     dbn_root = tmp_path / "raw"
     dbn_path = dbn_root / "ES" / "2024" / "2024-01.dbn.zst"
@@ -1577,6 +1699,45 @@ def test_plan_and_results_share_run_id_and_plan_hash() -> None:
     assert results[0]["pipeline_raw_ready"] is True
 
 
+def test_dbn_download_manifest_and_chunk_rows_contain_expected_fields(
+    tmp_path: Path,
+) -> None:
+    result = {
+        "status": "ok",
+        "schema": "ohlcv-1m",
+        "product": "ES",
+        "year": 2024,
+        "start": "2024-01-01",
+        "end": "2025-01-01",
+        "chunk": "year",
+        "output_path": (tmp_path / "data" / "dbn" / "ohlcv_1m" / "ES" / "2024" / "2024-01-01_2025-01-01.dbn.zst").as_posix(),
+        "manifest_path": (tmp_path / "manifest.json").as_posix(),
+        "bytes": 10,
+        "job_id": "job-test",
+        "run_id": "run-test",
+        "plan_hash": "hash-test",
+    }
+
+    manifest = build_dbn_download_manifest(
+        [result],
+        mode="download-dbn",
+        dbn_root=tmp_path / "data" / "dbn" / "ohlcv_1m",
+        raw_root=tmp_path / "data" / "raw",
+        run_id="run-test",
+        plan_hash="hash-test",
+    )
+    rows = dbn_chunk_manifest_rows([result])
+
+    assert manifest["stage"] == "raw_ingest"
+    assert manifest["dbn_root"].endswith("data/dbn/ohlcv_1m")
+    assert manifest["raw_root"].endswith("data/raw")
+    assert manifest["schemas"] == ["ohlcv-1m"]
+    assert manifest["chunk_count"] == 1
+    assert manifest["status_counts"] == {"ok": 1}
+    assert rows[0]["output_path"].endswith("2024-01-01_2025-01-01.dbn.zst")
+    assert rows[0]["manifest_path"].endswith("manifest.json")
+
+
 def test_dry_run_uses_separate_plan_path_and_no_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1616,8 +1777,12 @@ def test_dry_run_uses_separate_plan_path_and_no_results(
     assert payload["task_count"] == 2
     planned = payload["tasks"]
     assert [task["schema"] for task in planned] == ["ohlcv-1m", "definition"]
-    assert planned[0]["output_path"].endswith("raw/ES/2024.dbn.zst")
-    assert planned[1]["output_path"].endswith("raw/definition/ES/2024.dbn.zst")
+    assert planned[0]["output_path"].endswith(
+        "data/dbn/ohlcv_1m/ES/2024/2024-01-01_2024-01-02.dbn.zst"
+    )
+    assert planned[1]["output_path"].endswith(
+        "data/dbn/definition/ES/2024/2024-01-01_2024-01-02.dbn.zst"
+    )
     assert planned[1]["symbol"] == "ES.FUT"
     assert planned[1]["stype_in"] == "parent"
 

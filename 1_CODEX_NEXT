@@ -1,0 +1,68 @@
+Work in the active repo only: C:\Users\donny\Desktop\futures_intraday_model.
+
+Follow AGENTS.md exactly. Before edits, inspect repo path and git status. Keep diffs minimal. Do not commit, stage, delete, move, rename, add dependencies, or rewrite architecture unless I explicitly ask. Do not change trading/data semantics casually.
+
+Goal: execute the next six project tasks in this exact order, one task at a time. Do not skip ahead. After each task, run the narrowest relevant validation, report files changed, commands run, tests run, unresolved risks, and current git status. If a task exposes a blocker, stop and report the blocker instead of forcing progress.
+
+Tasks, in order:
+
+1. Lock down Phase 1A/1B raw data layout and tests
+   - Review the current dirty changes in:
+     - README.md
+     - project_layout.md
+     - scripts/phase1A_download/download_databento_raw.py
+     - tests/phase1A_download/test_download_databento_raw.py
+   - Confirm the intended raw layout is consistent everywhere:
+     - data/dbn/ohlcv_1m/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst
+     - data/dbn/definition/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst
+     - data/raw/{market}/{year}.parquet
+     - reports/raw_ingest/
+   - Make only minimal corrections needed to align docs, code, tests, and behavior.
+   - Validate with focused Phase 1A/1B tests and CLI help checks.
+   - Stop after reporting this task unless I say continue.
+
+2. Fix contract metadata / point-in-time definitions
+   - Inspect Phase 1B conversion and metadata handling.
+   - Identify why definition_point_in_time_enforced is currently false.
+   - Implement the smallest safe change needed so raw conversion uses correct point-in-time contract metadata where possible.
+   - If the current data inputs do not support true point-in-time metadata, document the blocker explicitly instead of faking it.
+   - Add or update tests proving the behavior.
+   - Validate with focused Phase 1B tests.
+   - Stop after reporting this task unless I say continue.
+
+3. Replace provisional costs with real cost config
+   - Inspect configs/costs.yaml and Phase 3/Phase 4 cost validation.
+   - Replace placeholder/provisional values only if reliable futures fee/commission assumptions are already available in repo docs/configs.
+   - If reliable values are not available, create a clear non-code TODO/blocker note in the appropriate planning doc rather than inventing costs.
+   - Do not bypass Phase 4’s provisional-cost guard.
+   - Validate Phase 3/Phase 4 cost-related tests.
+   - Stop after reporting this task unless I say continue.
+
+4. Run a small ES-only end-to-end build through Phase 4
+   - Use the smallest existing ES sample/config path available.
+   - Run Phase 1A/1B only if needed and safe; do not redownload large data unless explicitly approved.
+   - Build or validate through Phase 4.
+   - Report exact commands, row counts, schemas/manifest paths, warnings, and whether generated artifacts remain untracked.
+   - Stop after reporting this task unless I say continue.
+
+5. Build Phase 5 WFA split planning
+   - Add the smallest Phase 5 skeleton needed for walk-forward split planning.
+   - Include purge/embargo, train/test windows, final holdout rules, manifest output, and tests.
+   - Do not train models yet.
+   - Do not change Phase 1-4 public contracts unless strictly necessary.
+   - Validate with focused tests and CLI help.
+   - Stop after reporting this task unless I say continue.
+
+6. Add simple baseline models/rules
+   - Only proceed after Phase 5 is structurally valid.
+   - Add simple fixed-rule or baseline model scaffolding first: logistic/ridge/simple baselines only.
+   - No hyperparameter tuning beyond obvious defaults.
+   - Ensure outputs are manifest-driven and compatible with WFA splits.
+   - Add tests for leakage prevention, manifest integrity, and basic prediction output shape.
+   - Validate with focused tests.
+   - Stop and report final status.
+
+Important:
+- Treat labels, features, sessions, rolls, costs, WFA splits, purge/embargo, and timestamp alignment as protected core logic.
+- Prefer audit/reporting over speculative implementation if repo evidence is insufficient.
+- Never present provisional costs, non-point-in-time metadata, or sample-data results as production evidence.

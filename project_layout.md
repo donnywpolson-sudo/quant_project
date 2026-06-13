@@ -56,8 +56,8 @@ Phase 1 is a two-step raw-ingest workflow:
 DBN archive path pattern:
 
 ```text
-data/raw/{market}/{year}.dbn.zst
-data/raw/definition/{market}/{year}.dbn.zst
+data/dbn/ohlcv_1m/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst
+data/dbn/definition/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst
 ```
 
 Raw parquet path pattern:
@@ -246,7 +246,7 @@ This is the realistic operational pipeline. The old 27-stage checklist is preser
 
 | Phase | Name | Main artifact | Purpose |
 |---:|---|---|---|
-| 1A | DBN Archive | `data/raw/{market}/{year}.dbn.zst` plus `data/raw/definition/{market}/{year}.dbn.zst` | Download and archive immutable Databento OHLCV and definition DBN/DBN.ZST market-year chunks. |
+| 1A | DBN Archive | `data/dbn/ohlcv_1m/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst` plus `data/dbn/definition/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst` | Download and archive immutable Databento OHLCV and definition DBN/DBN.ZST chunks. |
 | 1B | Raw Parquet Stitch | `data/raw/{market}/{year}.parquet` | Validate OHLCV plus definition DBN chunks and convert market-year OHLCV chunks into immutable parquet. |
 | 2 | Causal Base Builder | `data/causally_gated_normalized/{market}/{year}.parquet` | Validate, session-normalize, roll-flag, synthetic-mark, and causally gate raw bars. |
 | 3 | Target / Label Generation | `data/labeled/{market}/{year}.parquet` | Build next-bar-entry 15-minute labels with cost-aware and intraday validity flags. |
@@ -290,8 +290,8 @@ Old stages 24-27 -> Phase 16-22: final holdout, final WFA, final predictions, fi
 ### Core artifact flow
 
 ```text
-data/raw/{market}/{year}.dbn.zst
-data/raw/definition/{market}/{year}.dbn.zst
+data/dbn/ohlcv_1m/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst
+data/dbn/definition/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst
 -> data/raw/{market}/{year}.parquet
 -> data/causally_gated_normalized/{market}/{year}.parquet
 -> data/labeled/{market}/{year}.parquet
@@ -671,16 +671,16 @@ continuous-contract 1-minute OHLCV parquet files.
 
 ## Input
 
-Databento `GLBX.MDP3` DBN or DBN.ZST chunks, one OHLCV and one definition file
-per market/year.
+Databento `GLBX.MDP3` DBN or DBN.ZST chunks, one or more OHLCV files and
+matching definition files per market/year.
 
 ## Required paths
 
 DBN archive:
 
 ```text
-data/raw/{market}/{year}.dbn.zst
-data/raw/definition/{market}/{year}.dbn.zst
+data/dbn/ohlcv_1m/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst
+data/dbn/definition/{market}/{year}/{chunk_start}_{chunk_end}.dbn.zst
 ```
 
 Raw parquet output:
@@ -711,7 +711,7 @@ Production and research profiles require every field above. The
 
 ## Build requirements
 
-- Support one DBN chunk per market/year.
+- Support one or more DBN chunks per market/year.
 - Request and manifest both `schema="ohlcv-1m"` and `schema="definition"`.
 - Hash every DBN chunk before conversion and verify the sidecar manifest.
 - Convert all chunks, concatenate, sort by `ts_event`, and check duplicates.
@@ -728,6 +728,10 @@ Production and research profiles require every field above. The
 - Report `price_scale_policy`, `data_quality_source`,
   `vendor_quality_available`, `decoded_symbols`, `input_hashes`,
   `output_hash`, row counts, `first_ts`, and `last_ts`.
+- Write aggregate raw-ingest reports under `reports/raw_ingest/`, including
+  `dbn_download_manifest.json`, `dbn_chunk_manifest.csv`,
+  `raw_parquet_manifest.json`, and `definition_download_manifest.json` when
+  definition archives are downloaded.
 
 ## Breakpoints
 
