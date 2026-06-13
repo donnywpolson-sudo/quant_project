@@ -5,10 +5,13 @@ Follow AGENTS.md and 1_CODEX_NEXT exactly. Do not stage, commit, delete, move, r
 
 Goal: perform these three steps in strict order. Do not start a later step until the previous step has completed successfully. If any step fails or exposes a blocker, stop and report the blocker.
 
+Project-wide exclusions: E7, J7, QI, QO, ZQ, and PA are not needed. Exclude them from all coverage audits, download plans, downloads, conversions, validations, and reports unless I explicitly approve re-adding them.
+
 Step 1: Finish definition DBN downloads
 - Inspect current canonical OHLCV and definition coverage:
   - data/dbn/ohlcv_1m/{market}/{year}/
   - data/dbn/definition/{market}/{year}/
+- Ignore excluded markets: E7, J7, QI, QO, ZQ, PA.
 - Identify market-years where OHLCV exists but matching definition DBN is missing.
 - Dry-run the smallest safe Phase 1A definition-only download plan first.
 - Confirm planned outputs are under:

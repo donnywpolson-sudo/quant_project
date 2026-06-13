@@ -61,6 +61,8 @@ Full Phase 1A archive:
 python -m scripts.phase1A_download.download_databento_raw --universe extended_cme --start-year 2010 --end-year 2026 --end-date 2026-06-10
 ```
 
+Project-wide excluded markets: `E7`, `J7`, `QI`, `QO`, `ZQ`, `PA`.
+
 The downloader does not replace existing files unless `--overwrite` is passed.
 
 ## Project Profiles
@@ -71,7 +73,7 @@ Operational profiles live in `configs/alpha_tiered.yaml`.
 tier_0 = ES smoke test
 tier_1 = CL/ES/ZN recent core
 tier_2 = CL/ES/ZN long core
-tier_3 = exact 27-market GLBX-only long universe
+tier_3 = exact 31-market GLBX-only long universe
 all_raw = inventory only
 metadata_optional_test = unit-test only
 ```

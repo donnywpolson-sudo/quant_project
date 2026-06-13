@@ -243,6 +243,9 @@ def _write_raw_manifest(path: Path, *, schema: str, market: str = "ES", year: in
 def test_parse_symbols_current_and_extended() -> None:
     assert parse_symbols(None, "current20") == CURRENT_20
     assert "ES" in parse_symbols(None, "extended_cme")
+    assert set(parse_symbols(None, "extended_cme")).isdisjoint(
+        {"E7", "J7", "PA", "QI", "QO", "ZQ"}
+    )
     assert len(EXTENDED_CME) > len(CURRENT_20)
 
 
@@ -606,7 +609,7 @@ def test_iter_range_tasks_rejects_non_glbx_dataset(tmp_path: Path) -> None:
 def test_iter_range_tasks_rejects_products_outside_allowed_glbx_universe(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="products outside the allowed GLBX.MDP3 futures universe"):
         iter_range_tasks(
-            ["NOT_A_PRODUCT"],
+            ["E7"],
             start="2024-01-01",
             end="2024-02-01",
             output_root=tmp_path / "raw_databento",

@@ -4,6 +4,8 @@ Follow AGENTS.md exactly. Before edits, inspect repo path and git status. Keep d
 
 Goal: execute the next six project tasks in this exact order, one task at a time. Do not skip ahead. After each task, run the narrowest relevant validation, report files changed, commands run, tests run, unresolved risks, and current git status. If a task exposes a blocker, stop and report the blocker instead of forcing progress.
 
+Project-wide exclusions: E7, J7, QI, QO, ZQ, and PA are not needed. Exclude them from coverage audits, download plans, downloads, conversions, validations, and reports unless explicitly re-approved.
+
 Tasks, in order:
 
 1. Lock down Phase 1A/1B raw data layout and tests

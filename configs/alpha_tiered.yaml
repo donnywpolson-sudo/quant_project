@@ -22,7 +22,7 @@ defaults:
   final_holdout_years: &final_holdout_years [2025]
 
   core_markets: &core_markets ["CL", "ES", "ZN"]
-  full_markets: &full_markets ["ES", "NQ", "RTY", "YM", "CL", "NG", "RB", "HO", "GC", "SI", "HG", "SR3", "ZN", "ZB", "6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "ZC", "ZS", "ZW", "LE", "HE"]
+  full_markets: &full_markets ["ES", "NQ", "RTY", "YM", "CL", "NG", "RB", "HO", "GC", "SI", "HG", "PL", "SR3", "ZT", "ZF", "ZN", "ZB", "UB", "6A", "6B", "6C", "6E", "6J", "6M", "6N", "6S", "ZC", "ZS", "ZW", "LE", "HE"]
 
   core_market_families: &core_market_families
     CL: energy
@@ -41,9 +41,13 @@ defaults:
     GC: metals
     SI: metals
     HG: metals
+    PL: metals
     SR3: rates
+    ZT: rates
+    ZF: rates
     ZN: rates
     ZB: rates
+    UB: rates
     6A: fx
     6B: fx
     6C: fx
@@ -230,7 +234,7 @@ profiles:
     market_families: *core_market_families
 
   tier_3_research:
-    description: "Full-universe research: 27 markets, 2010-2024."
+    description: "Full-universe research: 31 markets, 2010-2024."
     intent: full_universe_long_research
     requirement_set: production_like
     settings_profile: long_research
@@ -241,7 +245,7 @@ profiles:
     market_families: *full_market_families
 
   tier_3_holdout:
-    description: "Full-universe holdout: 27 markets, 2025."
+    description: "Full-universe holdout: 31 markets, 2025."
     intent: full_universe_final_holdout
     requirement_set: production_like
     settings_profile: long_research
@@ -253,7 +257,7 @@ profiles:
     market_families: *full_market_families
 
   tier_3_forward:
-    description: "Full-universe forward: 27 markets, 2026."
+    description: "Full-universe forward: 31 markets, 2026."
     intent: full_universe_forward_validation
     requirement_set: production_like
     settings_profile: long_research

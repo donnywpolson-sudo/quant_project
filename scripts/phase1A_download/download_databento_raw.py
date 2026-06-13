@@ -128,17 +128,11 @@ EXTENDED_CME = sorted(
             "6M",
             "6N",
             "6S",
-            "E7",
-            "J7",
-            "PA",
             "PL",
-            "QI",
-            "QO",
             "RB",
             "HO",
             "UB",
             "ZF",
-            "ZQ",
             "ZT",
         ]
     )

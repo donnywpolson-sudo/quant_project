@@ -182,6 +182,15 @@ markets:
     round_turn_cost_dollars: 37.5
     cost_source: provisional_placeholder_hg
 
+  PL:
+    <<: *standard_costs
+    family: metals
+    tick_size: 0.1
+    tick_value: 5.0
+    point_value: 50.0
+    round_turn_cost_dollars: 15.0
+    cost_source: provisional_placeholder_pl
+
   # Rates
   SR3:
     <<: *standard_costs
@@ -191,6 +200,24 @@ markets:
     point_value: 2500.0
     round_turn_cost_dollars: 18.75
     cost_source: provisional_placeholder_sr3
+
+  ZT:
+    <<: *standard_costs
+    family: rates
+    tick_size: 0.00390625
+    tick_value: 7.8125
+    point_value: 2000.0
+    round_turn_cost_dollars: 23.4375
+    cost_source: provisional_placeholder_zt
+
+  ZF:
+    <<: *standard_costs
+    family: rates
+    tick_size: 0.0078125
+    tick_value: 7.8125
+    point_value: 1000.0
+    round_turn_cost_dollars: 23.4375
+    cost_source: provisional_placeholder_zf
 
   ZN:
     <<: *standard_costs
@@ -209,6 +236,15 @@ markets:
     point_value: 1000.0
     round_turn_cost_dollars: 93.75
     cost_source: provisional_placeholder_zb
+
+  UB:
+    <<: *standard_costs
+    family: rates
+    tick_size: 0.03125
+    tick_value: 31.25
+    point_value: 1000.0
+    round_turn_cost_dollars: 93.75
+    cost_source: provisional_placeholder_ub
 
   # Agriculture and livestock
   ZC:

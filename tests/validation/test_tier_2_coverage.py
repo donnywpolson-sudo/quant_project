@@ -90,8 +90,9 @@ def test_tier_3_profile_matches_exact_universe_and_years() -> None:
 
     markets = profiles[FULL_UNIVERSE_PROFILE]["markets"]
     assert markets == TIER_2_UNIVERSE
-    assert len(markets) == 27
-    assert len(set(markets)) == 27
+    assert len(markets) == 31
+    assert len(set(markets)) == 31
+    assert EXCLUDED == ["E7", "J7", "PA", "QI", "QO", "ZQ"]
     assert set(markets).isdisjoint(EXCLUDED)
     assert profiles[FULL_UNIVERSE_PROFILE]["years"] == list(range(2010, 2025))
     assert profiles["tier_3_holdout"]["years"] == [2025]
@@ -176,7 +177,7 @@ def test_coverage_gate_fails_when_one_raw_file_is_missing(tmp_path: Path) -> Non
 
 def test_coverage_gate_fails_if_excluded_market_is_inserted(tmp_path: Path) -> None:
     payload = load_yaml(ROOT / "configs" / "alpha_tiered.yaml")
-    payload["profiles"][FULL_UNIVERSE_PROFILE]["markets"] = TIER_2_UNIVERSE + ["UB"]
+    payload["profiles"][FULL_UNIVERSE_PROFILE]["markets"] = TIER_2_UNIVERSE + ["E7"]
     config = tmp_path / "alpha_tiered.yaml"
     config.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     _touch_complete_tree(tmp_path, list(range(2010, 2025)))

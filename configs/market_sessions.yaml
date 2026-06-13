@@ -217,9 +217,13 @@ markets:
   GC: *cme_globex_market
   SI: *cme_globex_market
   HG: *cme_globex_market
+  PL: *cme_globex_market
   SR3: *cme_globex_market
+  ZT: *cme_globex_market
+  ZF: *cme_globex_market
   ZN: *cme_globex_market
   ZB: *cme_globex_market
+  UB: *cme_globex_market
   ZC: *cme_globex_market
   ZS: *cme_globex_market
   ZW: *cme_globex_market

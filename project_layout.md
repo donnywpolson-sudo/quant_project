@@ -165,10 +165,12 @@ metadata_optional_test = tests only
 ```
 
 `tier_1` is for frequent CL/ES/ZN iteration. `tier_2` is the same core over
-long history. `tier_3` is the actual 27-market GLBX-only research universe. `tier_1` results do not prove `tier_3`
+long history. `tier_3` is the actual 31-market GLBX-only research universe. `tier_1` results do not prove `tier_3`
 performance. Missing Tier-3 data must fail stage validation clearly; the
 pipeline must not shrink the Tier-3 universe to whatever data exists. `all_raw`
 is inventory only and must not feed labels, WFA, gates, or research decisions.
+
+Project-wide excluded markets: `E7`, `J7`, `QI`, `QO`, `ZQ`, `PA`.
 
 Each market config should include:
 
@@ -193,10 +195,10 @@ ZN
 Tier-3 real research universe:
 
 ```text
-ES NQ RTY YM VX
+ES NQ RTY YM
 CL NG RB HO
-GC SI HG
-SR3 ZN ZB
+GC SI HG PL
+SR3 ZT ZF ZN ZB UB
 6A 6B 6C 6E 6J 6M 6N 6S
 ZC ZS ZW LE HE
 ```
