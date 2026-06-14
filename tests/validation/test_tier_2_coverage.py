@@ -160,8 +160,35 @@ def test_coverage_gate_passes_on_tmp_complete_tree(tmp_path: Path) -> None:
 
     assert report["status"] == "PASS"
     assert report["coverage_errors"] == []
-    assert report["production_alpha_evidence_ready"] is False
-    assert report["hard_gates"]["production_alpha_cost_gate"]["status"] == "FAIL"
+    assert report["production_alpha_evidence_ready"] is True
+    assert report["research_pipeline_ready"] is True
+    assert report["live_trading_ready"] is False
+    assert report["hard_gates"]["production_alpha_cost_gate"]["status"] == "PASS"
+    live_gate = report["hard_gates"]["live_trading_readiness_gate"]
+    assert live_gate["status"] == "FAIL"
+    assert live_gate["contract_execution_mapping_ready"] is False
+    assert live_gate["calendar_refresh_current"] is False
+    assert live_gate["live_fill_model_available"] is False
+    assert "contract_specific_execution_mapping_missing" in live_gate["blocking_reasons"]
+    assert "current_exchange_calendar_refresh_missing" in live_gate["blocking_reasons"]
+    assert "live_fill_or_slippage_model_missing" in live_gate["blocking_reasons"]
+
+
+def test_coverage_gate_skips_product_unavailable_years(tmp_path: Path) -> None:
+    config = ROOT / "configs" / "alpha_tiered.yaml"
+    _touch_complete_tree(tmp_path, list(range(2010, 2025)))
+    for market, years in {"RTY": range(2010, 2017), "SR3": range(2010, 2018)}.items():
+        for year in years:
+            (tmp_path / "data" / "raw" / market / f"{year}.parquet").unlink()
+
+    report = build_report(_namespace(tmp_path, config=config, stage="raw"))
+
+    assert report["status"] == "PASS"
+    assert report["artifact_checks"]["raw"]["missing"] == []
+    assert report["artifact_checks"]["raw"]["unavailable_by_market"] == {
+        "RTY": list(range(2010, 2017)),
+        "SR3": list(range(2010, 2018)),
+    }
 
 
 def test_coverage_gate_fails_when_one_raw_file_is_missing(tmp_path: Path) -> None:

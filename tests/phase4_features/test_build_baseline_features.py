@@ -12,7 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.phase4_features.build_baseline_features import (
     FEATURE_COLS,
+    FORBIDDEN_FEATURE_COLUMNS,
     PHASE3_LABEL_SEMANTICS_ID,
+    REGIME_LABEL_COLUMNS,
     add_base_market_features,
     add_intermarket_features,
     process_file,
@@ -91,8 +93,14 @@ def _frame(
             "mfe_ticks_15m": 0.0,
             "fade_long_success_15m": False,
             "fade_short_success_15m": False,
+            "target_fade_long_success_15m": False,
+            "target_fade_short_success_15m": False,
+            "target_fade_success_15m": False,
             "trend_danger_up_30m": False,
             "trend_danger_down_30m": False,
+            "target_trend_danger_long_30m": False,
+            "target_trend_danger_short_30m": False,
+            "target_trend_danger_30m": False,
             "revert_to_vwap_30m": False,
             "revert_to_session_mid_30m": False,
             "source_path": "fixture",
@@ -316,6 +324,17 @@ def test_registry_excludes_targets_audit_source_and_forbidden_columns() -> None:
     assert validate_registry(FEATURE_COLS) == []
     assert all(col.startswith("feature_") for col in FEATURE_COLS)
     assert not any(col.startswith("target_") for col in FEATURE_COLS)
+    for column in (
+        "target_fade_long_success_15m",
+        "target_fade_short_success_15m",
+        "target_fade_success_15m",
+        "target_trend_danger_long_30m",
+        "target_trend_danger_short_30m",
+        "target_trend_danger_30m",
+    ):
+        assert column in REGIME_LABEL_COLUMNS
+        assert column in FORBIDDEN_FEATURE_COLUMNS
+        assert column not in FEATURE_COLS
     assert "instrument_id" not in FEATURE_COLS
     assert "feature_input_valid" not in FEATURE_COLS
     injected = validate_registry([*FEATURE_COLS, "target_ret_15m"])
@@ -417,11 +436,27 @@ def test_process_file_writes_matrix_registries_and_reports(tmp_path: Path) -> No
         costs_config=costs_path,
         input_root=input_root,
     )
-    write_reports([result], profile="tier_1", output_root=output_root, reports_root=reports_root)
+    write_reports(
+        [result],
+        profile="tier_1",
+        input_root=input_root,
+        output_root=output_root,
+        reports_root=reports_root,
+    )
 
     output = pd.read_parquet(output_root / "ES" / "2024.parquet")
     assert result.status in {"PASS", "WARN"}
     assert set(FEATURE_COLS).issubset(output.columns)
+    for column in (
+        "target_fade_long_success_15m",
+        "target_fade_short_success_15m",
+        "target_fade_success_15m",
+        "target_trend_danger_long_30m",
+        "target_trend_danger_short_30m",
+        "target_trend_danger_30m",
+    ):
+        assert column in output.columns
+        assert column not in FEATURE_COLS
     assert "feature_input_valid" not in FEATURE_COLS
     assert (output_root / "feature_cols.json").exists()
     assert (output_root / "target_cols.json").exists()
@@ -436,6 +471,8 @@ def test_process_file_writes_matrix_registries_and_reports(tmp_path: Path) -> No
     manifest = json.loads((reports_root / "baseline_feature_manifest.json").read_text())
     report = json.loads((reports_root / "baseline_feature_report.json").read_text())
     for payload in (manifest, report):
+        assert payload["input_root"] == input_root.as_posix()
+        assert payload["output_root"] == output_root.as_posix()
         assert payload["config_hash"]
         assert payload["input_file_hashes"][input_path.as_posix()] != "missing"
         assert payload["output_file_hashes"][

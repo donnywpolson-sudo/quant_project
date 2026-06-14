@@ -195,6 +195,12 @@ session_templates:
       "2026-11-26": "12:00"
       "2026-11-27": "12:00"
       "2026-12-24": "12:00"
+
+live_calendar_refresh:
+  current: false
+  status: refresh_required_before_live_or_paper_live
+  reason: exchange holiday and early-close schedules must be verified against current CME calendars
+
 markets:
   default: &cme_globex_market
     session_template: cme_globex_17_16_ct

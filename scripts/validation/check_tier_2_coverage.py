@@ -54,6 +54,11 @@ EXCLUDED = [
     "ZQ",
 ]
 
+PRODUCT_AVAILABLE_START_YEAR = {
+    "RTY": 2017,
+    "SR3": 2018,
+}
+
 REQUIRED_COST_KEYS = [
     "tick_size",
     "tick_value",
@@ -223,14 +228,60 @@ def check_costs(cost_config: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
     )
 
 
+def check_live_readiness(
+    session_config: dict[str, Any],
+    cost_config: dict[str, Any],
+) -> dict[str, Any]:
+    cost_model = cost_config.get("cost_model", {})
+    if not isinstance(cost_model, dict):
+        cost_model = {}
+    calendar_refresh = session_config.get("live_calendar_refresh", {})
+    if not isinstance(calendar_refresh, dict):
+        calendar_refresh = {}
+
+    contract_execution_mapping_ready = False
+    calendar_refresh_current = calendar_refresh.get("current") is True
+    live_fill_model_available = cost_model.get("live_fill_model_available") is True
+    fixed_slippage = str(cost_model.get("slippage_source", "")).startswith(
+        "approved_internal_model_assumption"
+    )
+    blocking_reasons: list[str] = []
+    if not contract_execution_mapping_ready:
+        blocking_reasons.append("contract_specific_execution_mapping_missing")
+    if not calendar_refresh_current:
+        blocking_reasons.append("current_exchange_calendar_refresh_missing")
+    if not live_fill_model_available or fixed_slippage:
+        blocking_reasons.append("live_fill_or_slippage_model_missing")
+
+    return {
+        "live_trading_ready": not blocking_reasons,
+        "contract_execution_mapping_ready": contract_execution_mapping_ready,
+        "calendar_refresh_current": calendar_refresh_current,
+        "live_fill_model_available": live_fill_model_available,
+        "fixed_slippage_research_assumption": fixed_slippage,
+        "blocking_reasons": blocking_reasons,
+        "status": "PASS" if not blocking_reasons else "FAIL",
+    }
+
+
 def check_files(root: Path, years: list[int]) -> dict[str, Any]:
     missing: list[str] = []
     present: list[str] = []
     by_market: dict[str, dict[str, list[int]]] = {}
+    unavailable_by_market: dict[str, list[int]] = {}
     for market in TIER_2_UNIVERSE:
         market_present: list[int] = []
         market_missing: list[int] = []
-        for year in years:
+        available_start_year = PRODUCT_AVAILABLE_START_YEAR.get(market)
+        unavailable_years = [
+            year for year in years if available_start_year is not None and year < available_start_year
+        ]
+        if unavailable_years:
+            unavailable_by_market[market] = unavailable_years
+        expected_years = [
+            year for year in years if available_start_year is None or year >= available_start_year
+        ]
+        for year in expected_years:
             path = root / market / f"{year}.parquet"
             if path.exists():
                 present.append(path.as_posix())
@@ -238,8 +289,18 @@ def check_files(root: Path, years: list[int]) -> dict[str, Any]:
             else:
                 missing.append(path.as_posix())
                 market_missing.append(year)
-        by_market[market] = {"present_years": market_present, "missing_years": market_missing}
-    return {"root": root.as_posix(), "present": present, "missing": missing, "by_market": by_market}
+        by_market[market] = {
+            "present_years": market_present,
+            "missing_years": market_missing,
+            "unavailable_years": unavailable_years,
+        }
+    return {
+        "root": root.as_posix(),
+        "present": present,
+        "missing": missing,
+        "unavailable_by_market": unavailable_by_market,
+        "by_market": by_market,
+    }
 
 
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
@@ -273,6 +334,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "status": "FAIL" if provisional_costs else "PASS",
         "provisional_cost_markets": provisional_costs,
     }
+    live_readiness = check_live_readiness(session_config, cost_config)
 
     return {
         "profile": profile_info,
@@ -287,8 +349,15 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "artifact_checks": artifact_checks,
         "hard_gates": {
             "production_alpha_cost_gate": production_alpha_cost_gate,
+            "live_trading_readiness_gate": {
+                "name": "live_trading_requires_contract_mapping_current_calendar_and_live_fill_model",
+                **live_readiness,
+            },
         },
         "production_alpha_evidence_ready": production_alpha_cost_gate["status"] == "PASS",
+        "research_pipeline_ready": not coverage_errors
+        and production_alpha_cost_gate["status"] == "PASS",
+        "live_trading_ready": live_readiness["live_trading_ready"],
         "status": "FAIL" if coverage_errors else "PASS",
         "coverage_errors": coverage_errors,
         "config_error_count": len(config_errors),
@@ -330,6 +399,7 @@ def main() -> int:
         f"config_errors={report['config_error_count']} artifact_errors={report['artifact_error_count']} "
         f"missing={missing} production_alpha_cost_gate="
         f"{report['hard_gates']['production_alpha_cost_gate']['status']} "
+        f"live_trading_ready={report['live_trading_ready']} "
         f"report={Path(args.report_out).as_posix()}"
     )
     return 1 if report["status"] != "PASS" else 0

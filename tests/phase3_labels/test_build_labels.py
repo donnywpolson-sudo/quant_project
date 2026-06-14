@@ -339,8 +339,14 @@ def test_fade_and_30m_regime_labels() -> None:
     assert row["mae_ticks_15m"] == -3.0
     assert row["fade_long_success_15m"] == True
     assert row["fade_short_success_15m"] == False
+    assert row["target_fade_long_success_15m"] == True
+    assert row["target_fade_short_success_15m"] == False
+    assert row["target_fade_success_15m"] == True
     assert row["trend_danger_up_30m"] == True
     assert row["trend_danger_down_30m"] == True
+    assert row["target_trend_danger_long_30m"] == True
+    assert row["target_trend_danger_short_30m"] == True
+    assert row["target_trend_danger_30m"] == True
     assert row["revert_to_vwap_30m"] == True
     assert row["revert_to_session_mid_30m"] == True
 
@@ -367,6 +373,15 @@ def test_output_schema_and_reports(tmp_path: Path) -> None:
     assert output["label_semantics"].eq(LABEL_SEMANTICS_ID).all()
     assert output["cost_source"].eq("test_costs").all()
     assert output["cost_provisional"].eq(False).all()
+    for column in (
+        "target_fade_long_success_15m",
+        "target_fade_short_success_15m",
+        "target_fade_success_15m",
+        "target_trend_danger_long_30m",
+        "target_trend_danger_short_30m",
+        "target_trend_danger_30m",
+    ):
+        assert column in output.columns
     manifest = json.loads((reports_root / "label_manifest.json").read_text())
     report = json.loads((reports_root / "label_report.json").read_text())
     provenance_keys = {

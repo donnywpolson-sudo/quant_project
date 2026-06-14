@@ -474,6 +474,13 @@ paper/live: future forward test
 - Market-specific tick value, point value, commission, and slippage assumptions must be used.
 - Strategy gates must fail or warn if costs dominate gross edge.
 
+#### Cost config source policy
+
+`configs/costs.yaml` must identify the broker commission, exchange-fee recovery,
+NFA/regulatory-fee recovery, clearing-fee treatment, slippage assumption,
+effective date, source URL/document, and whether each value is per-side or
+round-turn. Phase 4 must continue to fail on `cost_provisional = true`.
+
 #### Prop-firm realism rules
 
 - Simulate starting balance, profit target, daily loss limit, trailing drawdown, max contracts, minimum trading days, and forced flatten time.
@@ -2652,6 +2659,10 @@ failures
 - Calendar coverage is config-backed through 2026, but exchange schedules must be refreshed before live use.
 - L0 OHLCV cannot model queue position, spread, order-book imbalance, or true fill probability.
 - Provisional costs are structural only, not economic evidence.
+- `research_pipeline_ready` and `live_trading_ready` are separate gates. Research
+  validation may pass while live readiness remains false because contract-specific
+  execution mapping, current exchange-calendar refresh, and live fill/slippage
+  modeling are not complete.
 - ZN synthetic-density warning must remain visible.
 - Prop-firm viability requires dollar path simulation, not just Sharpe/net return.
 

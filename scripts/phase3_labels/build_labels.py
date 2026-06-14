@@ -127,8 +127,14 @@ REGIME_LABEL_COLUMNS = [
     "mfe_ticks_15m",
     "fade_long_success_15m",
     "fade_short_success_15m",
+    "target_fade_long_success_15m",
+    "target_fade_short_success_15m",
+    "target_fade_success_15m",
     "trend_danger_up_30m",
     "trend_danger_down_30m",
+    "target_trend_danger_long_30m",
+    "target_trend_danger_short_30m",
+    "target_trend_danger_30m",
     "revert_to_vwap_30m",
     "revert_to_session_mid_30m",
 ]
@@ -766,8 +772,18 @@ def add_labels(df: pd.DataFrame, config: MarketConfig) -> pd.DataFrame:
     df["mfe_ticks_15m"] = mfe_ticks.where(target_valid)
     df["fade_long_success_15m"] = pd.Series(fade_long_success, index=df.index)
     df["fade_short_success_15m"] = pd.Series(fade_short_success, index=df.index)
+    df["target_fade_long_success_15m"] = df["fade_long_success_15m"].astype(bool)
+    df["target_fade_short_success_15m"] = df["fade_short_success_15m"].astype(bool)
+    df["target_fade_success_15m"] = (
+        df["target_fade_long_success_15m"] | df["target_fade_short_success_15m"]
+    )
     df["trend_danger_up_30m"] = trend_danger_up.fillna(False).astype(bool)
     df["trend_danger_down_30m"] = trend_danger_down.fillna(False).astype(bool)
+    df["target_trend_danger_long_30m"] = df["trend_danger_up_30m"].astype(bool)
+    df["target_trend_danger_short_30m"] = df["trend_danger_down_30m"].astype(bool)
+    df["target_trend_danger_30m"] = (
+        df["target_trend_danger_long_30m"] | df["target_trend_danger_short_30m"]
+    )
     df["revert_to_vwap_30m"] = revert_to_vwap.fillna(False).astype(bool)
     df["revert_to_session_mid_30m"] = revert_to_session_mid.fillna(False).astype(bool)
     df["label_semantics"] = LABEL_SEMANTICS_ID

@@ -103,7 +103,7 @@ Tasks, in order:
    - If reliable values are not available, create a clear non-code TODO/blocker note in the appropriate planning doc rather than inventing costs.
    - Do not bypass Phase 4's provisional-cost guard.
    - Validate Phase 3/Phase 4 cost-related tests.
-   - Continue to the next task after successful validation.
+   - Task 6 source decision: configs/costs.yaml uses IBKR public non-member US futures commission and fee-recovery tables for broker commission, exchange-fee recovery, and NFA regulatory-fee recovery. Slippage is the approved internal model assumption of 1 tick per side. Phase 4's provisional-cost guard remains active and should pass only when Phase 3 labels carry cost_provisional = false.
 
 7. Run a small ES-only end-to-end build through Phase 4
    - Use the smallest existing ES sample/config path available.
@@ -118,6 +118,7 @@ Tasks, in order:
    - Do not train models yet.
    - Do not change Phase 1-4 public contracts unless strictly necessary.
    - Validate with focused tests and CLI help.
+   - Task 8 implementation: scripts.phase5_wfa.build_wfa_splits writes reports/wfa/split_plan.csv and reports/wfa/split_plan.json, enforces models.yaml purge/final-holdout policy, rejects mixed research/holdout profiles, and exposes the documented scripts.build_wfa_splits wrapper.
    - Continue to the next task after successful validation.
 
 9. Add simple baseline models/rules
@@ -127,6 +128,8 @@ Tasks, in order:
    - Ensure outputs are manifest-driven and compatible with WFA splits.
    - Add tests for leakage prevention, manifest integrity, and basic prediction output shape.
    - Validate with focused tests.
+   - Task 9 implementation: scripts.phase7_wfa.run_wfa and scripts.run_wfa train enabled Phase 7A Ridge/logistic controls on train folds only, score test folds only, consume canonical target columns, and write baseline OOS predictions plus WFA/manifest reports.
+   - Post-audit hardening required before trusting results as live-like: Phase 7 must train only selection_allowed research folds, canonical feature matrices must live under data/feature_matrices/baseline, canonical fade/trend target columns must physically exist, convergence/collapse must fail validation, and live_trading_ready must remain separate from research_pipeline_ready.
    - Stop and report final status.
 
 Important:
