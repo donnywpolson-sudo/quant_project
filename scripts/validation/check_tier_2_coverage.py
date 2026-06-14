@@ -129,9 +129,17 @@ def check_profile(config: dict[str, Any], requested_profile: str) -> tuple[dict[
         return {}, [f"profile {requested_profile!r} resolved to {resolved!r} but was not found"]
 
     markets = [str(item) for item in profile.get("markets", [])]
-    if markets != TIER_2_UNIVERSE:
+    unknown_markets = sorted(set(markets) - set(TIER_2_UNIVERSE))
+    duplicate_markets = sorted({market for market in markets if markets.count(market) > 1})
+    if not markets:
+        errors.append("profile markets missing")
+    if duplicate_markets:
+        errors.append(f"profile markets must be unique: {','.join(duplicate_markets)}")
+    if unknown_markets:
+        errors.append(f"profile markets outside supported universe: {','.join(unknown_markets)}")
+    if resolved.startswith("tier_3") and markets != TIER_2_UNIVERSE:
         errors.append("profile markets do not exactly match full-universe tier order and membership")
-    if len(markets) != 31 or len(set(markets)) != 31:
+    if resolved.startswith("tier_3") and (len(markets) != 31 or len(set(markets)) != 31):
         errors.append("profile markets must contain exactly 31 unique markets")
 
     excluded_present = sorted(set(markets) & set(EXCLUDED))
@@ -146,7 +154,7 @@ def check_profile(config: dict[str, Any], requested_profile: str) -> tuple[dict[
     if not isinstance(families, dict):
         errors.append("profile market_families mapping missing")
         families = {}
-    missing_family = [market for market in TIER_2_UNIVERSE if not families.get(market)]
+    missing_family = [market for market in markets if not families.get(market)]
     if missing_family:
         errors.append(f"missing market_families: {','.join(missing_family)}")
 
@@ -280,12 +288,12 @@ def check_live_readiness(
     }
 
 
-def check_files(root: Path, years: list[int]) -> dict[str, Any]:
+def check_files(root: Path, markets: list[str], years: list[int]) -> dict[str, Any]:
     missing: list[str] = []
     present: list[str] = []
     by_market: dict[str, dict[str, list[int]]] = {}
     unavailable_by_market: dict[str, list[int]] = {}
-    for market in TIER_2_UNIVERSE:
+    for market in markets:
         market_present: list[int] = []
         market_missing: list[int] = []
         available_start_year = PRODUCT_AVAILABLE_START_YEAR.get(market)
@@ -496,14 +504,21 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     session_info, session_errors = check_sessions(session_config)
     cost_info, cost_errors = check_costs(cost_config)
 
+    markets = profile_info.get("markets", [])
     years = profile_info.get("years", [])
     artifact_checks: dict[str, Any] = {}
     if args.stage in {"raw", "all"}:
-        artifact_checks["raw"] = check_files(Path(args.raw_root), years)
+        artifact_checks["raw"] = check_files(Path(args.raw_root), markets, years)
     if args.stage in {"causal", "all"}:
-        artifact_checks["causal"] = check_files(Path(args.causal_root), years)
+        artifact_checks["causal"] = check_files(Path(args.causal_root), markets, years)
     if args.stage in {"labels", "all"}:
-        artifact_checks["labels"] = check_files(Path(args.labeled_root), years)
+        artifact_checks["labels"] = check_files(Path(args.labeled_root), markets, years)
+    if args.stage in {"features", "all"}:
+        artifact_checks["features"] = check_files(
+            Path(args.canonical_feature_root),
+            markets,
+            years,
+        )
     feature_artifact_warnings = check_non_canonical_feature_artifacts(
         Path(getattr(args, "feature_root", "data/feature_matrices")),
         Path(getattr(args, "canonical_feature_root", "data/feature_matrices/baseline")),
@@ -610,7 +625,11 @@ def write_report(path: Path, report: dict[str, Any]) -> None:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", default="tier_3")
-    parser.add_argument("--stage", choices=["raw", "causal", "labels", "all"], default="all")
+    parser.add_argument(
+        "--stage",
+        choices=["raw", "causal", "labels", "features", "all"],
+        default="all",
+    )
     parser.add_argument("--config", default="configs/alpha_tiered.yaml")
     parser.add_argument("--session-config", default="configs/market_sessions.yaml")
     parser.add_argument("--costs-config", default="configs/costs.yaml")

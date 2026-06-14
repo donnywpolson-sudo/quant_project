@@ -121,18 +121,36 @@ reports/labels/
 
 ## Baseline Feature Matrix
 
-Planned Phase 4 implementation:
+Canonical implementation: `scripts/phase4_features/build_baseline_features.py`.
 
-```text
-scripts/phase4_features/build_baseline_features.py
-tests/phase4_features/test_build_baseline_features.py
-```
-
-Canonical command once implemented:
+Build baseline feature matrices for the tier-1 core set:
 
 ```powershell
 python -m scripts.phase4_features.build_baseline_features --profile tier_1
 ```
+
+Output:
+
+```text
+data/feature_matrices/baseline/{market}/{year}.parquet
+data/feature_matrices/baseline/feature_cols.json
+reports/features_baseline/
+```
+
+## WFA And Model Diagnostics
+
+Build walk-forward splits, train baseline controls, and evaluate saved
+out-of-sample predictions:
+
+```powershell
+python -m scripts.phase5_wfa.build_wfa_splits --profile tier_1
+python -m scripts.phase7_wfa.run_wfa --profile tier_1 --matrix baseline --run baseline
+python -m scripts.phase8_model_selection.evaluate_predictions --run baseline
+```
+
+Phase 8 produces research diagnostics, not a live execution simulator. Model
+promotion requires positive costed out-of-sample policy metrics and passing
+promotion gates.
 
 ## Tests
 

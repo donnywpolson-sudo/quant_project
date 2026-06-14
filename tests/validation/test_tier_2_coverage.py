@@ -40,9 +40,15 @@ STALE_REFERENCE_PATTERNS = (
 REFERENCE_ROOTS = ("README.md", "build/project_layout.md", "configs", "tests", "scripts")
 
 
-def _namespace(tmp_path: Path, *, config: Path, stage: str = "all") -> Namespace:
+def _namespace(
+    tmp_path: Path,
+    *,
+    config: Path,
+    stage: str = "all",
+    profile: str = FULL_UNIVERSE_PROFILE,
+) -> Namespace:
     return Namespace(
-        profile=FULL_UNIVERSE_PROFILE,
+        profile=profile,
         stage=stage,
         config=str(config),
         session_config=str(ROOT / "configs" / "market_sessions.yaml"),
@@ -60,14 +66,25 @@ def _namespace(tmp_path: Path, *, config: Path, stage: str = "all") -> Namespace
     )
 
 
-def _touch_complete_tree(tmp_path: Path, years: list[int]) -> None:
+def _touch_complete_tree(
+    tmp_path: Path,
+    years: list[int],
+    markets: tuple[str, ...] | list[str] = TIER_2_UNIVERSE,
+) -> None:
     for root_name in ("raw", "causally_gated_normalized", "labeled"):
         root = tmp_path / "data" / root_name
-        for market in TIER_2_UNIVERSE:
+        for market in markets:
             for year in years:
                 path = root / market / f"{year}.parquet"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("placeholder", encoding="utf-8")
+
+    feature_root = tmp_path / "data" / "feature_matrices" / "baseline"
+    for market in markets:
+        for year in years:
+            path = feature_root / market / f"{year}.parquet"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("placeholder", encoding="utf-8")
 
 
 def test_default_profile_exists_aliases_resolve_and_retired_profiles_absent() -> None:
@@ -215,6 +232,36 @@ def test_coverage_gate_skips_product_unavailable_years(tmp_path: Path) -> None:
         "RTY": list(range(2010, 2017)),
         "SR3": list(range(2010, 2018)),
     }
+
+
+def test_coverage_gate_fails_when_feature_file_is_missing(tmp_path: Path) -> None:
+    config = ROOT / "configs" / "alpha_tiered.yaml"
+    _touch_complete_tree(tmp_path, list(range(2010, 2025)))
+    (tmp_path / "data" / "feature_matrices" / "baseline" / "ES" / "2010.parquet").unlink()
+
+    report = build_report(_namespace(tmp_path, config=config, stage="all"))
+
+    assert report["status"] == "FAIL"
+    assert "missing features files: 1" in report["coverage_errors"]
+    assert "data/feature_matrices/baseline/ES/2010.parquet" in report[
+        "artifact_checks"
+    ]["features"]["missing"][0]
+
+
+def test_tier_1_profile_checks_only_profile_scope(tmp_path: Path) -> None:
+    config = ROOT / "configs" / "alpha_tiered.yaml"
+    markets = ["ES", "CL", "ZN", "6E"]
+    _touch_complete_tree(tmp_path, [2023, 2024], markets=markets)
+
+    report = build_report(
+        _namespace(tmp_path, config=config, stage="all", profile="tier_1")
+    )
+
+    assert report["status"] == "PASS"
+    assert report["profile"]["resolved_profile"] == "tier_1_research"
+    for check in report["artifact_checks"].values():
+        assert len(check["present"]) == 8
+        assert check["missing"] == []
 
 
 def test_non_canonical_feature_artifacts_are_reported_without_failing_research(

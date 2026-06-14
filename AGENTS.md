@@ -31,6 +31,16 @@ Hard safety rules:
 * Do not change trading/data semantics unless explicitly asked.
 * Never store secrets, tokens, API keys, credentials, or private keys in repo files, prompts, memory, or config.
 
+Quant research/model-building policy:
+
+* Prioritize research-process correctness over model complexity.
+* Before model selection or tuning, verify data integrity, instrument metadata, target construction, timestamp alignment, leakage checks, walk-forward splits, purge/embargo, and cost/slippage/commission math.
+* Treat any improvement as suspect until it survives locked out-of-sample validation with realistic costs and no post-test retuning.
+* Prefer simple robust baselines before ML or complex ensembles.
+* Record experiment scope, tested variants, validation windows, costs, warnings, and failure modes; do not cherry-pick isolated metrics.
+* For intraday futures, account for sessions, rolls, tick/point values, spreads, liquidity regime, partial fills, rejected orders, latency assumptions, and capacity before trusting PnL.
+* Add or change risk controls before increasing strategy aggressiveness: max loss, position limits, volatility targeting, kill switch, stale-data guards, and order throttles.
+
 Core quant logic is protected:
 
 * labels/targets
