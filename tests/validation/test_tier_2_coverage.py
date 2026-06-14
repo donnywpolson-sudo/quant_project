@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from argparse import Namespace
 from pathlib import Path
 
@@ -48,6 +49,9 @@ def _namespace(tmp_path: Path, *, config: Path, stage: str = "all") -> Namespace
         raw_root=str(tmp_path / "data" / "raw"),
         causal_root=str(tmp_path / "data" / "causally_gated_normalized"),
         labeled_root=str(tmp_path / "data" / "labeled"),
+        feature_root=str(tmp_path / "data" / "feature_matrices"),
+        canonical_feature_root=str(tmp_path / "data" / "feature_matrices" / "baseline"),
+        wfa_reports_root=str(tmp_path / "reports" / "wfa"),
         report_out=str(tmp_path / "reports" / "validation" / "full_universe_coverage.json"),
     )
 
@@ -161,9 +165,19 @@ def test_coverage_gate_passes_on_tmp_complete_tree(tmp_path: Path) -> None:
     assert report["status"] == "PASS"
     assert report["coverage_errors"] == []
     assert report["production_alpha_evidence_ready"] is True
+    assert report["artifact_evidence_ready"] is True
+    assert report["artifact_evidence_failures"] == []
     assert report["research_pipeline_ready"] is True
     assert report["live_trading_ready"] is False
+    assert report["canonical_feature_root"] == (
+        tmp_path / "data" / "feature_matrices" / "baseline"
+    ).as_posix()
+    assert report["non_canonical_feature_artifact_count"] == 0
     assert report["hard_gates"]["production_alpha_cost_gate"]["status"] == "PASS"
+    artifact_gate = report["hard_gates"]["artifact_evidence_gate"]
+    assert artifact_gate["status"] == "PASS"
+    assert artifact_gate["non_canonical_feature_artifact_count"] == 0
+    assert artifact_gate["invalid_prediction_manifest_count"] == 0
     live_gate = report["hard_gates"]["live_trading_readiness_gate"]
     assert live_gate["status"] == "FAIL"
     assert live_gate["contract_execution_mapping_ready"] is False
@@ -189,6 +203,70 @@ def test_coverage_gate_skips_product_unavailable_years(tmp_path: Path) -> None:
         "RTY": list(range(2010, 2017)),
         "SR3": list(range(2010, 2018)),
     }
+
+
+def test_non_canonical_feature_artifacts_are_reported_without_failing_research(
+    tmp_path: Path,
+) -> None:
+    config = ROOT / "configs" / "alpha_tiered.yaml"
+    _touch_complete_tree(tmp_path, list(range(2010, 2025)))
+    feature_root = tmp_path / "data" / "feature_matrices"
+    stale_path = feature_root / "ES" / "2024.parquet"
+    canonical_path = feature_root / "baseline" / "ES" / "2024.parquet"
+    stale_path.parent.mkdir(parents=True, exist_ok=True)
+    canonical_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_path.write_text("old", encoding="utf-8")
+    canonical_path.write_text("new", encoding="utf-8")
+
+    report = build_report(_namespace(tmp_path, config=config, stage="all"))
+
+    assert report["status"] == "PASS"
+    assert report["research_pipeline_ready"] is True
+    assert report["artifact_evidence_ready"] is False
+    assert report["hard_gates"]["artifact_evidence_gate"]["status"] == "FAIL"
+    assert report["non_canonical_feature_artifact_count"] == 1
+    assert "non-canonical feature artifacts exist" in report["artifact_evidence_failures"][0]
+    assert report["non_canonical_feature_artifacts"] == [
+        {
+            "artifact_path": stale_path.as_posix(),
+            "canonical_path": canonical_path.as_posix(),
+        }
+    ]
+
+
+def test_invalid_prediction_manifest_fails_artifact_evidence_only(tmp_path: Path) -> None:
+    config = ROOT / "configs" / "alpha_tiered.yaml"
+    _touch_complete_tree(tmp_path, list(range(2010, 2025)))
+    reports_root = tmp_path / "reports" / "wfa"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = reports_root / "baseline_predictions_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "failure_count": 1,
+                "prediction_count": 0,
+                "output_file_hashes": {
+                    "data/predictions/baseline/oos_predictions.parquet": "NOT_WRITTEN"
+                },
+                "stale_output_path_exists": True,
+                "artifact_evidence_ready": False,
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    report = build_report(_namespace(tmp_path, config=config, stage="all"))
+
+    assert report["status"] == "PASS"
+    assert report["research_pipeline_ready"] is True
+    assert report["artifact_evidence_ready"] is False
+    artifact_gate = report["hard_gates"]["artifact_evidence_gate"]
+    assert artifact_gate["status"] == "FAIL"
+    assert artifact_gate["invalid_prediction_manifest_count"] == 1
+    assert manifest_path.as_posix() in report["artifact_evidence_failures"][0]
+    prediction_warnings = report["artifact_warnings"]["prediction_manifests"]
+    assert prediction_warnings["invalid_manifest_count"] == 1
+    assert prediction_warnings["manifests"][0]["artifact_evidence_ready"] is False
 
 
 def test_coverage_gate_fails_when_one_raw_file_is_missing(tmp_path: Path) -> None:

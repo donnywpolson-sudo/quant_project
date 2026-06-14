@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -330,6 +331,19 @@ def hash_optional_file(path: Path) -> str | None:
     if not path.exists() or not path.is_file():
         return None
     return sha256_file(path)
+
+
+def infer_artifact_root(rows: list[dict[str, object]], key: str) -> Path | None:
+    roots: list[Path] = []
+    for row in rows:
+        value = row.get(key)
+        if value is None:
+            continue
+        path = Path(str(value))
+        roots.append(path.parent.parent if path.parent != path.parent.parent else path.parent)
+    if not roots:
+        return None
+    return Path(os.path.commonpath([str(root) for root in roots]))
 
 
 def current_git_commit() -> str:
@@ -1362,11 +1376,16 @@ def write_reports(
     reports_root: Path,
     profile: str,
     profile_config_path: Path = DEFAULT_PROFILE_CONFIG,
+    *,
+    input_root: Path | None = None,
+    output_root: Path | None = None,
 ) -> None:
     reports_root.mkdir(parents=True, exist_ok=True)
     rows = [result.to_dict() for result in results]
     csv_rows = [result.to_csv_row() for result in results]
     script_path = Path(__file__).resolve()
+    resolved_input_root = input_root or infer_artifact_root(rows, "input_path")
+    resolved_output_root = output_root or infer_artifact_root(rows, "output_path")
     output_file_hashes = {
         str(row["output_path"]): hash_optional_file(Path(str(row["output_path"])))
         for row in rows
@@ -1386,6 +1405,9 @@ def write_reports(
         "script_path": relative_source_path(script_path),
         "script_hash": sha256_file(script_path),
         "config_hash": hash_optional_file(profile_config_path),
+        "input_root": resolved_input_root.as_posix() if resolved_input_root else None,
+        "output_root": resolved_output_root.as_posix() if resolved_output_root else None,
+        "reports_root": reports_root.as_posix(),
         "input_file_hashes": {
             str(row["input_path"]): row["source_file_hash"] for row in rows
         },
@@ -1568,7 +1590,14 @@ def main() -> int:
             f"warnings={len(result.warnings)} failures={len(result.failures)}"
         )
 
-    write_reports(results, reports_root, args.profile, profile_config_path)
+    write_reports(
+        results,
+        reports_root,
+        args.profile,
+        profile_config_path,
+        input_root=raw_root,
+        output_root=output_root,
+    )
     return 1 if any(result.failures for result in results) else 0
 
 

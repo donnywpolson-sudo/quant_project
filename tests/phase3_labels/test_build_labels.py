@@ -390,6 +390,9 @@ def test_output_schema_and_reports(tmp_path: Path) -> None:
         "script_path",
         "script_hash",
         "config_hash",
+        "input_root",
+        "output_root",
+        "reports_root",
         "input_file_hashes",
         "output_file_hashes",
         "profile",
@@ -401,6 +404,14 @@ def test_output_schema_and_reports(tmp_path: Path) -> None:
     }
     assert provenance_keys <= set(manifest)
     assert provenance_keys <= set(report)
+    assert manifest["input_root"] == (
+        tmp_path / "data" / "causally_gated_normalized"
+    ).as_posix()
+    assert manifest["output_root"] == (tmp_path / "data" / "labeled").as_posix()
+    assert manifest["reports_root"] == reports_root.as_posix()
+    assert report["input_root"] == manifest["input_root"]
+    assert report["output_root"] == manifest["output_root"]
+    assert report["reports_root"] == manifest["reports_root"]
     assert isinstance(manifest["output_file_hashes"][result.output_path], str)
     assert len(manifest["output_file_hashes"][result.output_path]) == 64
     assert manifest["input_file_hashes"][result.input_path] is not None

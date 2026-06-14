@@ -407,6 +407,9 @@ def test_reports_are_written(tmp_path: Path) -> None:
         "script_path",
         "script_hash",
         "config_hash",
+        "input_root",
+        "output_root",
+        "reports_root",
         "input_file_hashes",
         "output_file_hashes",
         "profile",
@@ -418,6 +421,14 @@ def test_reports_are_written(tmp_path: Path) -> None:
     }
     assert provenance_keys <= set(manifest)
     assert provenance_keys <= set(validation)
+    assert manifest["input_root"] == (tmp_path / "data" / "raw").as_posix()
+    assert manifest["output_root"] == (
+        tmp_path / "data" / "causally_gated_normalized"
+    ).as_posix()
+    assert manifest["reports_root"] == reports_root.as_posix()
+    assert validation["input_root"] == manifest["input_root"]
+    assert validation["output_root"] == manifest["output_root"]
+    assert validation["reports_root"] == manifest["reports_root"]
     assert manifest["input_file_hashes"][result.input_path] == result.source_file_hash
     output_hash = manifest["output_file_hashes"][result.output_path]
     assert isinstance(output_hash, str)

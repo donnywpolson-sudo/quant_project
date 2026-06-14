@@ -160,6 +160,9 @@ def test_run_wfa_writes_oos_predictions_and_manifest(tmp_path: Path) -> None:
     assert manifest["input_root"] == input_root.as_posix()
     assert manifest["output_root"] == predictions_root.as_posix()
     assert manifest["prediction_count"] == 72
+    assert manifest["artifact_evidence_ready"] is True
+    assert manifest["artifact_evidence_failures"] == []
+    assert manifest["stale_output_path_exists"] is False
     assert set(PREDICTION_COLUMNS).issubset(predictions.columns)
     assert len(predictions) == 24 * 3
     assert predictions["timestamp"].min() >= pd.Timestamp("2024-01-03T00:00:00Z")
@@ -255,6 +258,7 @@ def test_non_research_fold_is_not_fit_by_default(tmp_path: Path, split_group: st
     assert manifest["failure_count"] > 0
     assert "no selectable research folds" in " ".join(manifest["failures"])
     assert manifest["skipped_fold_count"] == 1
+    assert manifest["artifact_evidence_ready"] is False
 
 
 def test_stale_split_plan_without_selection_allowed_fails(tmp_path: Path) -> None:
@@ -278,6 +282,56 @@ def test_stale_split_plan_without_selection_allowed_fails(tmp_path: Path) -> Non
 
     assert manifest["failure_count"] > 0
     assert "missing selection_allowed" in " ".join(manifest["failures"])
+
+
+def test_existing_prediction_output_is_flagged_when_current_run_writes_none(
+    tmp_path: Path,
+) -> None:
+    input_root = _feature_root(tmp_path)
+    predictions_root = tmp_path / "data" / "predictions"
+    reports_root = tmp_path / "reports" / "wfa"
+    models_config = _write_models_config(tmp_path / "configs" / "models.yaml")
+    split_plan = _write_split_plan(
+        reports_root / "split_plan.json",
+        split_group="restricted",
+        selection_allowed=False,
+    )
+    _write_feature_matrix(input_root)
+    stale_path = predictions_root / "baseline" / "oos_predictions.parquet"
+    stale_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "split_group": ["restricted"],
+            "model_id": ["old_model"],
+            "y_pred_raw": [0.25],
+        }
+    ).to_parquet(stale_path, index=False)
+    stale_hash = wfa._file_sha256(stale_path)
+
+    manifest = run_wfa(
+        profile="fixture",
+        matrix="baseline",
+        run="baseline",
+        input_root=input_root,
+        split_plan=split_plan,
+        predictions_root=predictions_root,
+        reports_root=reports_root,
+        models_config=models_config,
+    )
+
+    assert wfa._file_sha256(stale_path) == stale_hash
+    assert manifest["prediction_count"] == 0
+    assert manifest["stale_output_path_exists"] is True
+    assert manifest["stale_output_path"] == stale_path.as_posix()
+    assert manifest["stale_output_file_hash"] == stale_hash
+    assert manifest["stale_output_row_count"] == 1
+    assert manifest["stale_output_split_groups"] == ["restricted"]
+    assert manifest["output_file_hashes"][stale_path.as_posix()] == "NOT_WRITTEN"
+    assert manifest["artifact_evidence_ready"] is False
+    assert "stale prediction output exists" in " ".join(manifest["artifact_evidence_failures"])
+    assert "stale prediction output exists from a previous run" in " ".join(
+        manifest["failures"]
+    )
 
 
 @pytest.mark.parametrize("split_group", ["restricted", "forward", "final_holdout"])

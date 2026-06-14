@@ -117,6 +117,57 @@ def _file_hash_map(paths: Iterable[Path]) -> dict[str, str]:
     return {_relative_path(path): _file_hash_or_missing(path) for path in paths}
 
 
+def _stale_prediction_output_info(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "stale_output_path_exists": False,
+            "stale_output_path": None,
+            "stale_output_file_hash": None,
+            "stale_output_mtime_utc": None,
+            "stale_output_row_count": None,
+            "stale_output_split_groups": [],
+        }
+
+    info: dict[str, Any] = {
+        "stale_output_path_exists": True,
+        "stale_output_path": _relative_path(path),
+        "stale_output_file_hash": _file_sha256(path),
+        "stale_output_mtime_utc": datetime.fromtimestamp(
+            path.stat().st_mtime, tz=timezone.utc
+        ).isoformat(),
+        "stale_output_row_count": None,
+        "stale_output_split_groups": [],
+    }
+    try:
+        import pyarrow.parquet as pq
+
+        parquet_file = pq.ParquetFile(path)
+        info["stale_output_row_count"] = int(parquet_file.metadata.num_rows)
+        if "split_group" in parquet_file.schema.names:
+            table = pq.read_table(path, columns=["split_group"])
+            groups = table.column("split_group").to_pylist()
+            info["stale_output_split_groups"] = sorted(
+                {str(value) for value in groups if value is not None}
+            )
+    except Exception as exc:
+        info["stale_output_read_error"] = str(exc)
+    return info
+
+
+def prediction_artifact_evidence_failures(manifest: Mapping[str, Any]) -> list[str]:
+    failures: list[str] = []
+    if int(manifest.get("failure_count") or 0) > 0:
+        failures.append("manifest failure_count is nonzero")
+    if int(manifest.get("prediction_count") or 0) <= 0:
+        failures.append("manifest prediction_count is zero")
+    output_hashes = manifest.get("output_file_hashes", {})
+    if isinstance(output_hashes, Mapping) and any(value == "NOT_WRITTEN" for value in output_hashes.values()):
+        failures.append("manifest output hash is NOT_WRITTEN")
+    if manifest.get("stale_output_path_exists") is True:
+        failures.append("stale prediction output exists from a previous run")
+    return failures
+
+
 def _stable_hash(payload: object) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
         "utf-8"
@@ -677,6 +728,18 @@ def run_wfa(
         if prediction_count > 0
         else {_relative_path(output_path): "NOT_WRITTEN"}
     )
+    stale_output = _stale_prediction_output_info(output_path) if prediction_count == 0 else {
+        "stale_output_path_exists": False,
+        "stale_output_path": None,
+        "stale_output_file_hash": None,
+        "stale_output_mtime_utc": None,
+        "stale_output_row_count": None,
+        "stale_output_split_groups": [],
+    }
+    if stale_output["stale_output_path_exists"]:
+        failures.append(
+            f"stale prediction output exists from a previous run: {stale_output['stale_output_path']}"
+        )
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -697,6 +760,7 @@ def run_wfa(
         "failure_count": len(failures),
         "failures": failures,
         "diagnostics": diagnostics,
+        **stale_output,
     }
     manifest = {
         **{key: report[key] for key in ("generated_at", "git_commit", "script_path", "script_hash")},
@@ -724,7 +788,13 @@ def run_wfa(
         "warning_count": report["warning_count"],
         "failure_count": len(failures),
         "failures": failures,
+        **stale_output,
     }
+    artifact_evidence_failures = prediction_artifact_evidence_failures(manifest)
+    manifest["artifact_evidence_ready"] = not artifact_evidence_failures
+    manifest["artifact_evidence_failures"] = artifact_evidence_failures
+    report["artifact_evidence_ready"] = manifest["artifact_evidence_ready"]
+    report["artifact_evidence_failures"] = artifact_evidence_failures
     _write_json(reports_root / f"{run}_wfa_report.json", report)
     _write_json(reports_root / f"{run}_predictions_manifest.json", manifest)
     return manifest

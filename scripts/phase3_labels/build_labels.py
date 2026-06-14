@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -271,6 +272,19 @@ def hash_optional_file(path: Path) -> str | None:
     if not path.exists() or not path.is_file():
         return None
     return sha256_file(path)
+
+
+def infer_artifact_root(rows: list[dict[str, object]], key: str) -> Path | None:
+    roots: list[Path] = []
+    for row in rows:
+        value = row.get(key)
+        if value is None:
+            continue
+        path = Path(str(value))
+        roots.append(path.parent.parent if path.parent != path.parent.parent else path.parent)
+    if not roots:
+        return None
+    return Path(os.path.commonpath([str(root) for root in roots]))
 
 
 def config_hash(paths: Iterable[Path]) -> str:
@@ -886,9 +900,13 @@ def write_reports(
     *,
     profile_config_path: Path = DEFAULT_PROFILE_CONFIG,
     costs_config_path: Path = Path("configs/costs.yaml"),
+    input_root: Path | None = None,
+    output_root: Path | None = None,
 ) -> None:
     reports_root.mkdir(parents=True, exist_ok=True)
     rows = [result.to_dict() for result in results]
+    resolved_input_root = input_root or infer_artifact_root(rows, "input_path")
+    resolved_output_root = output_root or infer_artifact_root(rows, "output_path")
     run_failures = [
         {
             "market": row["market"],
@@ -905,6 +923,9 @@ def write_reports(
         "script_path": relative_path(script_path),
         "script_hash": sha256_file(script_path),
         "config_hash": config_hash([profile_config_path, costs_config_path]),
+        "input_root": resolved_input_root.as_posix() if resolved_input_root else None,
+        "output_root": resolved_output_root.as_posix() if resolved_output_root else None,
+        "reports_root": reports_root.as_posix(),
         "input_file_hashes": {
             str(row["input_path"]): hash_optional_file(Path(str(row["input_path"])))
             for row in rows
@@ -1043,6 +1064,8 @@ def main() -> int:
         args.profile,
         profile_config_path=profile_config,
         costs_config_path=costs_config,
+        input_root=input_root,
+        output_root=output_root,
     )
     return 1 if any(result.failures for result in results) else 0
 
