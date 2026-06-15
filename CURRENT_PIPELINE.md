@@ -10,6 +10,9 @@ complete alpha-generating or production backtesting system.
 - `tier_3_research` has complete available raw, causal, and label coverage, but incomplete baseline feature coverage.
 - Current Tier 1 model/research stack is `NO_GO` for promotion, tuning, and full WFA scale.
 - Phase 8 policy diagnostics can evaluate saved predictions with costs, but they are not a live fill simulator or full execution backtester.
+- Refreshed Phase 8 baseline evidence remains `NO_GO`: `baseline_refreshed`
+  has 23 trades, `net_return_dollars=-2353.5`, and anti-overfit robustness
+  `FAIL`.
 
 ## Tier 1 No-Go Decision
 
@@ -17,6 +20,10 @@ complete alpha-generating or production backtesting system.
 - Code state recorded in commit `c2794cf` (`Add Tier 1 ES research harness`).
 - Do not continue full-market/full-fold WFA, model tuning, or promotion work from the current Tier 1 stack.
 - The current evidence points to weak gross edge under the configured ES cost/slippage model, not a simple label-boundary issue.
+- Refreshed anti-overfit audit failures are `base_net_nonpositive`,
+  `cost_stress_1_5x_nonpositive`, `cost_stress_2x_nonpositive`,
+  `single_market_profit_contribution_above_cap`, and
+  `fold_pass_rate_below_minimum`.
 - `ZN` and `6E` remain quarantined until raw no-trade/session semantics are resolved.
 - `CL` remains diagnostic-only until raw gaps are explained.
 
@@ -26,6 +33,8 @@ Primary reports:
 - `reports/pipeline_audit/tier1_es_break_even_cost_audit.md`
 - `reports/pipeline_audit/tier1_es_locked_selectivity_recheck.md`
 - `reports/pipeline_audit/tier1_es_harness_family_sweep.md`
+- `reports/metrics/baseline_refreshed/baseline_refreshed_metrics.json`
+- `reports/experiments/anti_overfit_audit_refreshed.json`
 
 ## Promotion Gates
 
