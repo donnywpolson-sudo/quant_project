@@ -7,11 +7,28 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 DEFAULT_FREEZE_ROOT = Path("artifacts/frozen")
 DEFAULT_REPORTS_ROOT = Path("reports/final_holdout")
+
+
+def is_final_holdout_year_set(years: Iterable[int], final_holdout_years: Iterable[int]) -> bool:
+    profile_years = {int(year) for year in years}
+    final_years = {int(year) for year in final_holdout_years}
+    return bool(profile_years) and bool(final_years) and profile_years <= final_years
+
+
+def final_holdout_permission_failure(
+    *,
+    is_final_holdout: bool,
+    allow_final_holdout: bool,
+    action: str,
+) -> str | None:
+    if is_final_holdout and not allow_final_holdout:
+        return f"{action} requires --allow-final-holdout"
+    return None
 
 
 def _read_json(path: Path) -> dict[str, Any]:

@@ -15,6 +15,10 @@ from typing import Any, Iterable, Mapping
 import pandas as pd
 import yaml
 
+from scripts.final_holdout.guard_final_holdout import (
+    final_holdout_permission_failure,
+    is_final_holdout_year_set,
+)
 from scripts.validation.model_registry import resolve_purge_bars, validate_purge_policy
 from scripts.validation.check_tier_2_coverage import PRODUCT_AVAILABLE_START_YEAR
 
@@ -358,8 +362,16 @@ def build_split_plan(
     reports_root: Path,
     profile_config: Path,
     models_config: Path,
+    allow_final_holdout: bool = False,
 ) -> dict[str, Any]:
     plan = load_profile_plan(profile, profile_config)
+    permission_failure = final_holdout_permission_failure(
+        is_final_holdout=is_final_holdout_year_set(plan.years, plan.final_holdout_years),
+        allow_final_holdout=allow_final_holdout,
+        action=f"final-holdout split-plan generation for profile {plan.requested_profile!r}",
+    )
+    if permission_failure is not None:
+        raise SystemExit(permission_failure)
     policy = load_wfa_policy(models_config)
     inputs = resolve_input_paths(plan, input_root)
     frames_by_market: dict[str, list[pd.DataFrame]] = {market: [] for market in plan.markets}
@@ -458,6 +470,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reports-root", default=DEFAULT_REPORTS_ROOT.as_posix())
     parser.add_argument("--profile-config", default=DEFAULT_PROFILE_CONFIG.as_posix())
     parser.add_argument("--models-config", default=DEFAULT_MODELS_CONFIG.as_posix())
+    parser.add_argument("--allow-final-holdout", action="store_true")
     return parser
 
 
@@ -469,6 +482,7 @@ def main() -> int:
         reports_root=Path(args.reports_root),
         profile_config=Path(args.profile_config),
         models_config=Path(args.models_config),
+        allow_final_holdout=args.allow_final_holdout,
     )
     status = "FAIL" if manifest["failure_count"] else "PASS"
     print(

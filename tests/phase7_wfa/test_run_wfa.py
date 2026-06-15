@@ -520,6 +520,35 @@ def test_non_research_fold_marked_selectable_still_fails(tmp_path: Path, split_g
     assert manifest["skipped_fold_count"] == 1
 
 
+def test_final_holdout_fold_is_not_executed_by_phase7(tmp_path: Path) -> None:
+    input_root = _feature_root(tmp_path)
+    predictions_root = tmp_path / "data" / "predictions"
+    reports_root = tmp_path / "reports" / "wfa"
+    models_config = _write_models_config(tmp_path / "configs" / "models.yaml")
+    split_plan = _write_split_plan(
+        reports_root / "split_plan.json",
+        split_group="final_holdout",
+        selection_allowed=False,
+    )
+    _write_feature_matrix(input_root)
+
+    manifest = run_wfa(
+        profile="fixture",
+        matrix="baseline",
+        run="baseline",
+        input_root=input_root,
+        split_plan=split_plan,
+        predictions_root=predictions_root,
+        reports_root=reports_root,
+        models_config=models_config,
+    )
+
+    assert manifest["failure_count"] > 0
+    assert manifest["prediction_count"] == 0
+    assert not (predictions_root / "baseline" / "oos_predictions.parquet").exists()
+    assert manifest["skipped_folds"][0]["split_group"] == "final_holdout"
+
+
 def test_convergence_warning_is_a_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class WarningEstimator:
         def fit(self, x_train: pd.DataFrame, y_train: pd.Series) -> "WarningEstimator":

@@ -6,7 +6,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.final_holdout.guard_final_holdout import validate_final_holdout_guard
+from scripts.final_holdout.guard_final_holdout import (
+    final_holdout_permission_failure,
+    is_final_holdout_year_set,
+    validate_final_holdout_guard,
+)
 
 
 def _write_freeze_manifest(root: Path, freeze_id: str) -> Path:
@@ -63,3 +67,24 @@ def test_final_holdout_guard_refuses_tuning_and_policy_changes(tmp_path: Path) -
     assert metrics["used_final_holdout_for_tuning"] is False
     assert "final holdout tuning requested" in metrics["failures"]
     assert "final holdout policy change requested" in metrics["failures"]
+
+
+def test_final_holdout_permission_helper_requires_explicit_allow() -> None:
+    assert is_final_holdout_year_set([2025], [2025]) is True
+    assert is_final_holdout_year_set([2024, 2025], [2025]) is False
+
+    failure = final_holdout_permission_failure(
+        is_final_holdout=True,
+        allow_final_holdout=False,
+        action="final-holdout split-plan generation",
+    )
+
+    assert failure == "final-holdout split-plan generation requires --allow-final-holdout"
+    assert (
+        final_holdout_permission_failure(
+            is_final_holdout=True,
+            allow_final_holdout=True,
+            action="final-holdout split-plan generation",
+        )
+        is None
+    )

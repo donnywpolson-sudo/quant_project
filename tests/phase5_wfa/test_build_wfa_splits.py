@@ -134,7 +134,32 @@ def test_build_split_plan_enforces_purge_and_writes_manifest(tmp_path: Path) -> 
     assert saved["final_holdout_policy"]["final_holdout_excluded_from_selection"] is True
 
 
-def test_final_holdout_profile_is_tagged_and_excluded_from_selection(tmp_path: Path) -> None:
+def test_final_holdout_profile_blocks_without_explicit_allow(tmp_path: Path) -> None:
+    input_root = _feature_root(tmp_path)
+    reports_root = tmp_path / "reports" / "wfa"
+    profile_config = _write_profile_config(
+        tmp_path / "configs" / "alpha_tiered.yaml",
+        profile="holdout",
+    )
+    models_config = _write_models_config(tmp_path / "configs" / "models.yaml")
+    _write_matrix(input_root, year=2025, start="2025-01-01T00:00:00Z")
+
+    with pytest.raises(SystemExit, match="requires --allow-final-holdout"):
+        build_split_plan(
+            profile="selected",
+            input_root=input_root,
+            reports_root=reports_root,
+            profile_config=profile_config,
+            models_config=models_config,
+        )
+
+    assert not (reports_root / "split_plan.json").exists()
+    assert not (reports_root / "split_plan.csv").exists()
+
+
+def test_final_holdout_profile_is_tagged_and_excluded_from_selection_with_allow(
+    tmp_path: Path,
+) -> None:
     input_root = _feature_root(tmp_path)
     reports_root = tmp_path / "reports" / "wfa"
     profile_config = _write_profile_config(
@@ -150,6 +175,7 @@ def test_final_holdout_profile_is_tagged_and_excluded_from_selection(tmp_path: P
         reports_root=reports_root,
         profile_config=profile_config,
         models_config=models_config,
+        allow_final_holdout=True,
     )
 
     assert manifest["failure_count"] == 0
