@@ -26,6 +26,11 @@ complete alpha-generating or production backtesting system.
   `fold_pass_rate_below_minimum`.
 - `ZN` and `6E` remain quarantined until raw no-trade/session semantics are resolved.
 - `CL` remains diagnostic-only until raw gaps are explained.
+- Source-level validation is blocked by Databento access: the available
+  subscription only covers one year of L1 access, not the historical `trades`
+  windows needed here.
+- No Phase 2/session/fill semantic changes are justified from the current
+  evidence.
 
 Primary reports:
 

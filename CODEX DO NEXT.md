@@ -24,8 +24,12 @@ Next valid work paths:
 1. Upstream data/session semantics
    - Resolve whether ZN, 6E, and CL synthetic minute gaps are expected no-trade
      minutes, session-template issues, or true missing data.
-   - Keep ZN and 6E quarantined from Tier 1 model diagnostics until resolved.
+   - Source-level validation is blocked by Databento access: the available
+     subscription only covers one year of L1 access, not the historical `trades`
+     windows needed here.
+   - Keep ZN and 6E quarantined from Tier 1 model diagnostics.
    - Keep CL diagnostic-only until its raw gaps are explained.
+   - Do not change Phase 2/session/fill semantics from the current evidence.
 
 2. New ES-only hypothesis research
    - Use `scripts.phase9_research.es_hypothesis_harness` for bounded checks.
