@@ -20,6 +20,7 @@ from scripts.phase4_features.build_baseline_features import (
     process_file,
     resolve_profile_inputs,
     select_profile_inputs,
+    shock_decay_features,
     validate_registry,
     write_reports,
 )
@@ -353,6 +354,34 @@ def test_tier1_risk_score_is_usable_without_zero_filling_self_market(tmp_path: P
     assert out["feature_tier1_risk_on_score_30"].notna().any()
     assert missing["feature_tier1_risk_on_score_30"] < 1.0
     assert out["feature_rel_ret_vs_CL_15"].isna().all()
+
+
+def test_shock_decay_features_do_not_explode_on_tiny_directional_denominator() -> None:
+    df = pd.DataFrame(
+        {
+            "close": [100.0, 100.1],
+            "high": [100.5, 100.74],
+            "low": [100.0, 99.9],
+        }
+    )
+    valid = pd.Series([True, True])
+    segment = pd.Series(["session", "session"])
+    shock = pd.Series([True, False])
+    shock_direction = pd.Series([1.0, 0.0])
+    true_range = pd.Series([1.0, 0.84])
+
+    retrace, continuation, decay = shock_decay_features(
+        df,
+        valid,
+        segment,
+        true_range,
+        shock,
+        shock_direction,
+    )
+
+    assert continuation.iloc[1] == pytest.approx(0.24)
+    assert retrace.iloc[1] == 0.0
+    assert decay.iloc[1] == pytest.approx(0.92)
 
 
 def test_registry_excludes_targets_audit_source_and_forbidden_columns() -> None:

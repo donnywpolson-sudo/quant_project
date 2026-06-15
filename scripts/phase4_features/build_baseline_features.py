@@ -88,6 +88,7 @@ STATIC_PROFILE_YEARS = {
 }
 TIER1_MARKETS = tuple(CORE_PROFILE_MARKETS)
 EPS = 1e-12
+SHOCK_DENOMINATOR_MIN_RANGE_FRACTION = 0.01
 PHASE3_LABEL_SEMANTICS_ID = "phase3_labels_v1_next_1m_open_to_15m_open"
 
 FEATURE_FAMILIES: dict[str, list[str]] = {
@@ -664,6 +665,15 @@ def safe_div(numerator: pd.Series, denominator: pd.Series | float, eps: float = 
     return numerator / denom.where(denom.abs() > eps)
 
 
+def shock_ratio_denominator(directional_move: float, shock_tr: float) -> float:
+    if not math.isfinite(shock_tr) or shock_tr <= EPS:
+        return math.nan
+    min_directional_move = max(EPS, abs(shock_tr) * SHOCK_DENOMINATOR_MIN_RANGE_FRACTION)
+    if math.isfinite(directional_move) and directional_move >= min_directional_move:
+        return directional_move
+    return shock_tr
+
+
 def rolling_sum(series: pd.Series, segment: pd.Series, window: int) -> pd.Series:
     return series.groupby(segment, sort=False).transform(
         lambda x: x.rolling(window, min_periods=window).sum()
@@ -1149,11 +1159,11 @@ def shock_decay_features(
             if math.isnan(shock_close) or direction == 0.0:
                 continue
             if direction > 0:
-                move = max(shock_close - shock_low, EPS)
+                move = shock_ratio_denominator(shock_close - shock_low, shock_tr)
                 retrace_arr[pos] = max(0.0, shock_close - close_arr[pos]) / move
                 continuation_arr[pos] = max(0.0, high_arr[pos] - shock_high) / move
             else:
-                move = max(shock_high - shock_close, EPS)
+                move = shock_ratio_denominator(shock_high - shock_close, shock_tr)
                 retrace_arr[pos] = max(0.0, close_arr[pos] - shock_close) / move
                 continuation_arr[pos] = max(0.0, shock_low - low_arr[pos]) / move
             if shock_tr > EPS:
